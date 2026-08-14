@@ -1,0 +1,34 @@
+job: countries-triple-sink
+version: "1"
+nodes:
+  - id: seed
+    pipeline:
+      source: {kind: ndjson-file, url: "src/test/resources/data/countries.ndjson"}
+      steps:
+        - {kind: filter, expr: "population > 50000000"}
+        - {kind: project, cols: [iso3, name, region, population]}
+      sinks:
+        - {kind: memory-table, name: big-countries}
+        - {kind: counting, label: seed-count}
+
+  - id: rollup
+    depends: [seed]
+    pipeline:
+      source: {kind: ref, node: seed}
+      reduce:
+        group-by: [region]
+        aggs:
+          - {name: n, kind: COUNT}
+          - {name: total_pop, kind: SUM, of: population}
+          - {name: max_pop, kind: MAX, of: population}
+      sinks:
+        - {kind: memory-table, name: region-rollup}
+        - {kind: ndjson-file, url: "target/pipelines-test/region-rollup.ndjson"}
+
+  - id: index
+    depends: [seed]
+    pipeline:
+      source: {kind: ref, node: seed}
+      sinks:
+        - {kind: kvstore, name: countries-kv, keyExpr: "iso3"}
+        - {kind: lucene, name: countries-idx, storeSource: true}

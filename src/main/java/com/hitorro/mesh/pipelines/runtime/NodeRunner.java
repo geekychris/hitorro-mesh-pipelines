@@ -1,0 +1,131 @@
+/*
+ * Copyright (c) 2006-2026 Chris Collins
+ */
+package com.hitorro.mesh.pipelines.runtime;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.hitorro.mesh.pipelines.model.NodeSpec;
+import com.hitorro.mesh.pipelines.model.PipelineSpec;
+import com.hitorro.mesh.pipelines.model.StepSpec;
+import com.hitorro.mesh.pipelines.sinks.CountingSink;
+import com.hitorro.mesh.pipelines.sinks.MemoryTableSink;
+import com.hitorro.mesh.pipelines.sinks.Sink;
+import com.hitorro.mesh.pipelines.sinks.SinkRegistry;
+import com.hitorro.mesh.pipelines.sources.SourceFactory;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.function.Function;
+
+/**
+ * Runs one node's pipeline end-to-end:
+ * <ol>
+ *   <li>Open the source into an iterator.</li>
+ *   <li>Chain the {@code steps} (filter / project / etc.).</li>
+ *   <li>If {@code reduce} is set, buffer + fold via {@link ReduceEngine}.</li>
+ *   <li>Fan out every row to every sink.</li>
+ *   <li>Auto-attach a {@code memory-table:<nodeId>} sink so downstream
+ *       nodes with {@code source: {kind: ref, node: <nodeId>}} can read
+ *       this node's output without the user having to declare it.</li>
+ * </ol>
+ * Sink close() runs in a finally block; per-sink errors are logged into
+ * the node's progress events but don't abort other sinks in the same node.
+ */
+public final class NodeRunner {
+
+    private final SinkRegistry sinkRegistry;
+    private final SourceFactory sourceFactory;
+
+    public NodeRunner(SinkRegistry sinkRegistry) {
+        this.sinkRegistry  = sinkRegistry;
+        this.sourceFactory = new SourceFactory(sinkRegistry);
+    }
+
+    public void run(NodeSpec node, JobStatus status) {
+        JobStatus.NodeStatus ns = status.node(node.id());
+        ns.state = JobStatus.State.RUNNING;
+        ns.startedAt = Instant.now();
+        status.addEvent(new JobStatus.ProgressEvent(node.id(), "start", "starting node", Instant.now()));
+
+        PipelineSpec p = node.pipeline();
+
+        // Always attach an auto memory-table sink so downstream refs work.
+        // If the user also declared their own memory-table with a different
+        // name that's fine — this one is a system-scoped default.
+        List<Sink> sinks = new ArrayList<>();
+        MemoryTableSink refSink = new MemoryTableSink(node.id(),
+                sinkRegistry.memoryTable(node.id()));
+        sinks.add(refSink);
+        for (var spec : p.sinks()) sinks.add(sinkRegistry.create(spec));
+
+        try {
+            // Open every sink up front — fail fast on bad configs.
+            for (Sink s : sinks) s.open();
+
+            // Count source-side rows-in even when filters drop them.
+            long[] rowsInHolder = { 0 };
+            Iterator<JsonNode> raw = wrap(sourceFactory.open(p.source()), rowsInHolder);
+
+            List<Function<JsonNode, JsonNode>> compiledSteps = p.steps().stream()
+                    .map(StepFactory::compile).toList();
+            Iterator<JsonNode> stream = StepFactory.chain(raw, compiledSteps);
+
+            if (p.reduce() != null) {
+                // Reduce buffers, folds, re-emits; rows-in is source count.
+                stream = ReduceEngine.reduce(stream, p.reduce());
+            }
+
+            long rowsOut = 0;
+            while (stream.hasNext()) {
+                JsonNode row = stream.next();
+                for (Sink s : sinks) {
+                    try { s.add(row); }
+                    catch (Exception e) {
+                        status.addEvent(new JobStatus.ProgressEvent(node.id(), "sink-error",
+                                sinkName(s) + ": " + e.getMessage(), Instant.now()));
+                    }
+                }
+                rowsOut++;
+                // Emit progress every 1000 rows for the SSE stream.
+                if ((rowsOut & 1023) == 0) {
+                    ns.rowsOut = rowsOut;
+                    status.addEvent(new JobStatus.ProgressEvent(node.id(), "progress",
+                            "rows: " + rowsOut, Instant.now()));
+                }
+            }
+            ns.rowsOut = rowsOut;
+            ns.rowsIn  = rowsInHolder[0];
+
+            for (Sink s : sinks) ns.sinkCounts.put(sinkName(s), s.count());
+
+            ns.state = JobStatus.State.SUCCEEDED;
+            status.addEvent(new JobStatus.ProgressEvent(node.id(), "done",
+                    "done: " + rowsOut + " rows", Instant.now()));
+        } catch (Exception e) {
+            ns.state = JobStatus.State.FAILED;
+            ns.error = e.getClass().getSimpleName() + ": " + e.getMessage();
+            status.addEvent(new JobStatus.ProgressEvent(node.id(), "error", ns.error, Instant.now()));
+        } finally {
+            for (Sink s : sinks) {
+                try { s.close(); }
+                catch (Exception ignored) { /* logged in per-sink error above */ }
+            }
+            ns.finishedAt = Instant.now();
+        }
+    }
+
+    private static Iterator<JsonNode> wrap(Iterator<JsonNode> it, long[] counter) {
+        return new Iterator<>() {
+            @Override public boolean hasNext() { return it.hasNext(); }
+            @Override public JsonNode next() { counter[0]++; return it.next(); }
+        };
+    }
+
+    private static String sinkName(Sink s) {
+        if (s instanceof MemoryTableSink m) return "memory:" + m.name();
+        if (s instanceof CountingSink c)    return "count:"  + c.label();
+        return s.getClass().getSimpleName();
+    }
+}

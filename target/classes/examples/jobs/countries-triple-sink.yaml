@@ -1,0 +1,63 @@
+# Bundled example job — a 3-node DAG that:
+#   * reads NDJSON country data (seed node)
+#   * filters to countries with population > 50M
+#   * projects to a smaller schema
+#   * publishes to an in-process memory table + counting sink
+# Two downstream nodes fan out from `seed`:
+#   * `rollup` — groups by region, emits COUNT + SUM(pop) + MAX(pop) → ndjson-file + memory-table
+#   * `index`  — indexes each row into a stub KV store (keyed on iso3) + a stub Lucene index
+#
+# Physical outputs land under ${hitorro.pipelines.home}/{kv|lucene|files}/.
+# Exercises every sink type shipped in Phase 1 and both DAG shapes
+# (fan-out from a common upstream + independent downstream branches).
+job: countries-triple-sink
+version: "1"
+nodes:
+  - id: seed
+    pipeline:
+      source: {kind: inline, rows: [
+        {iso3: USA, name: "United States",  region: Americas, population: 331000000},
+        {iso3: CHN, name: "China",          region: Asia,     population: 1412000000},
+        {iso3: IND, name: "India",          region: Asia,     population: 1408000000},
+        {iso3: IDN, name: "Indonesia",      region: Asia,     population:  278000000},
+        {iso3: PAK, name: "Pakistan",       region: Asia,     population:  231000000},
+        {iso3: BRA, name: "Brazil",         region: Americas, population:  214000000},
+        {iso3: NGA, name: "Nigeria",        region: Africa,   population:  218000000},
+        {iso3: MEX, name: "Mexico",         region: Americas, population:  126000000},
+        {iso3: JPN, name: "Japan",          region: Asia,     population:  125000000},
+        {iso3: DEU, name: "Germany",        region: Europe,   population:   83000000},
+        {iso3: GBR, name: "United Kingdom", region: Europe,   population:   67000000},
+        {iso3: FRA, name: "France",         region: Europe,   population:   68000000},
+        {iso3: CAN, name: "Canada",         region: Americas, population:   38000000},
+        {iso3: AUS, name: "Australia",      region: Oceania,  population:   26000000},
+        {iso3: MDV, name: "Maldives",       region: Asia,     population:     540000}
+      ]}
+      steps:
+        - {kind: filter,  expr: "population > 50000000"}
+        - {kind: project, cols: [iso3, name, region, population]}
+      sinks:
+        - {kind: memory-table, name: big-countries}
+        - {kind: counting, label: seed}
+
+  - id: rollup
+    depends: [seed]
+    pipeline:
+      source: {kind: ref, node: seed}
+      reduce:
+        group-by: [region]
+        aggs:
+          - {name: n,          kind: COUNT}
+          - {name: total_pop,  kind: SUM, of: population}
+          - {name: max_pop,    kind: MAX, of: population}
+      sinks:
+        - {kind: memory-table, name: region-rollup}
+        - {kind: counting, label: rollup}
+
+  - id: index
+    depends: [seed]
+    pipeline:
+      source: {kind: ref, node: seed}
+      sinks:
+        - {kind: kvstore, name: countries-kv, keyExpr: "iso3"}
+        - {kind: lucene,  name: countries-idx, storeSource: true}
+        - {kind: counting, label: index}
