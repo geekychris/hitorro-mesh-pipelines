@@ -1,0 +1,16 @@
+iata,name,country,elevation_ft,is_hub
+JFK,John F. Kennedy International,US,13,true
+LAX,Los Angeles International,US,125,true
+LHR,London Heathrow,GB,83,true
+CDG,Paris Charles de Gaulle,FR,392,true
+FRA,Frankfurt am Main,DE,364,true
+NRT,Tokyo Narita International,JP,141,true
+SIN,Singapore Changi,SG,22,true
+SYD,Sydney Kingsford Smith,AU,21,true
+GRU,São Paulo Guarulhos,BR,2459,true
+DXB,Dubai International,AE,62,true
+JNB,O.R. Tambo International,ZA,5558,true
+YYZ,Toronto Pearson,CA,569,true
+MEX,Mexico City International,MX,7316,true
+BOM,Chhatrapati Shivaji Maharaj,IN,39,true
+PEK,Beijing Capital International,CN,116,true

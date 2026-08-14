@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Live status of one job run — updated by {@link NodeRunner} as it works.
@@ -23,6 +24,13 @@ public final class JobStatus {
     public volatile Instant finishedAt;
     public volatile State state = State.PENDING;
     public volatile String error;
+
+    /**
+     * Cooperative cancel flag. NodeRunner polls between each row and stops
+     * the inner loop cleanly (still flushing / closing sinks) when set.
+     * JobRunner skips remaining ranks. DELETE /mesh/jobs/{id} sets this.
+     */
+    public final AtomicBoolean cancelRequested = new AtomicBoolean();
 
     // Order matches topological rank so UI can render columns.
     private final Map<String, NodeStatus> nodes = new LinkedHashMap<>();

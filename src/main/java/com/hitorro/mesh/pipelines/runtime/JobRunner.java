@@ -44,6 +44,7 @@ public final class JobRunner implements AutoCloseable {
             List<List<NodeSpec>> ranks = topoRank(spec.nodes());
             NodeRunner runner = new NodeRunner(sinkRegistry);
             for (List<NodeSpec> level : ranks) {
+                if (status.cancelRequested.get()) break;
                 if (level.size() == 1) {
                     runner.run(level.get(0), status);
                 } else {
@@ -59,7 +60,9 @@ public final class JobRunner implements AutoCloseable {
                     }
                 }
             }
-            status.state = JobStatus.State.SUCCEEDED;
+            status.state = status.cancelRequested.get()
+                    ? JobStatus.State.CANCELLED
+                    : JobStatus.State.SUCCEEDED;
         } catch (Exception e) {
             status.state = JobStatus.State.FAILED;
             status.error = e.getMessage();

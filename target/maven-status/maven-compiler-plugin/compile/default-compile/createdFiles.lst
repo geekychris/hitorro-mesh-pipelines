@@ -10,6 +10,7 @@ com/hitorro/mesh/pipelines/runtime/StepFactory.class
 com/hitorro/mesh/pipelines/runtime/JobStatus$Snapshot.class
 com/hitorro/mesh/pipelines/model/SinkSpec$Nats.class
 com/hitorro/mesh/pipelines/runtime/JobStatus$NodeStatusSnapshot.class
+com/hitorro/mesh/pipelines/model/StepSpec$ToTyped$Field.class
 com/hitorro/mesh/pipelines/model/NodeSpec.class
 com/hitorro/mesh/pipelines/runtime/JobStatus$ProgressEvent.class
 com/hitorro/mesh/pipelines/sources/SourceFactory$CloseableIterator.class
@@ -30,6 +31,7 @@ com/hitorro/mesh/pipelines/model/SinkSpec$CsvFile.class
 com/hitorro/mesh/pipelines/model/StepSpec$GroovyMap.class
 com/hitorro/mesh/pipelines/model/StepSpec$SetField.class
 com/hitorro/mesh/pipelines/model/SourceSpec$KvStore.class
+com/hitorro/mesh/pipelines/model/StepSpec$Lookup.class
 com/hitorro/mesh/pipelines/model/SourceSpec.class
 com/hitorro/mesh/pipelines/parse/JobSpecYaml.class
 com/hitorro/mesh/pipelines/runtime/NodeRunner.class
@@ -40,6 +42,7 @@ com/hitorro/mesh/pipelines/model/StepSpec$Rename.class
 com/hitorro/mesh/pipelines/runtime/StepFactory$1.class
 com/hitorro/mesh/pipelines/sinks/NdjsonFileSink.class
 com/hitorro/mesh/pipelines/model/ReduceSpec.class
+com/hitorro/mesh/pipelines/model/StepSpec$ToTyped.class
 com/hitorro/mesh/pipelines/runtime/BundledJobs.class
 com/hitorro/mesh/pipelines/model/StepSpec$Jvssql.class
 com/hitorro/mesh/pipelines/model/SinkSpec$JsonFile.class

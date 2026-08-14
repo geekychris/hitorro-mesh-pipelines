@@ -18,6 +18,8 @@ import java.util.List;
     @JsonSubTypes.Type(value = StepSpec.Project.class,    name = "project"),
     @JsonSubTypes.Type(value = StepSpec.Rename.class,     name = "rename"),
     @JsonSubTypes.Type(value = StepSpec.SetField.class,   name = "set-field"),
+    @JsonSubTypes.Type(value = StepSpec.ToTyped.class,    name = "to-typed"),
+    @JsonSubTypes.Type(value = StepSpec.Lookup.class,     name = "lookup"),
     @JsonSubTypes.Type(value = StepSpec.GroovyMap.class,  name = "groovy-map"),
     @JsonSubTypes.Type(value = StepSpec.Jvssql.class,     name = "jvssql"),
 })
@@ -39,6 +41,40 @@ public sealed interface StepSpec {
 
     /** Set a field to a constant value. */
     record SetField(String name, Object value) implements StepSpec { }
+
+    /**
+     * Validate + coerce each field to a JVS-compatible primitive type.
+     * Fields not in the schema are dropped unless {@code passthrough} is
+     * true. Rows failing coercion are dropped (Phase 2: route to an
+     * optional {@code dead-letter} sink).
+     *
+     * <p>Currently supports the JVS primitive families:
+     * {@code core_string} · {@code core_long} · {@code core_double} ·
+     * {@code core_boolean} · {@code core_timestamp} (ISO-8601 in, epoch
+     * millis out). This is a Phase-1 subset of the full JVS type system;
+     * the full {@code hitorro-jsontypesystem} integration lands in a
+     * follow-up.</p>
+     */
+    record ToTyped(java.util.List<Field> fields, boolean passthrough)
+            implements StepSpec {
+        public record Field(String name, String type) { }
+    }
+
+    /**
+     * Enrich each row by looking up matching entries in a previously-
+     * populated {@code memory-table} (or, in a follow-up, a kvstore).
+     * The lookup key is a dotted path into the source row; the target
+     * table is scanned once and indexed by its {@code onField}. Every
+     * name in {@code adds} is copied from the lookup row into the
+     * source row (nulls preserve).
+     *
+     * <p>Not a JOIN in the SQL sense — a per-row broadcast enrichment.
+     * When the lookup source is small (a country dimension, a lookup
+     * of user-agent → device class, a currency-symbol table), this is
+     * both cheaper than a JOIN and easier to describe.</p>
+     */
+    record Lookup(String from, String onField, String withKey,
+                  java.util.List<String> adds) implements StepSpec { }
 
     /**
      * Run each row through a Groovy transform script — the same DSL the

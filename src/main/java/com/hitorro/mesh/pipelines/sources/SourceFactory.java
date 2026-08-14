@@ -94,8 +94,19 @@ public final class SourceFactory {
 
     // ------------------------------------------------------------ CSV
     private Iterator<JsonNode> openCsv(String url) throws IOException {
-        Path path = resolvePath(url);
-        List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
+        List<String> lines;
+        if (url.startsWith("classpath:")) {
+            String cp = url.substring("classpath:".length());
+            try (var in = SourceFactory.class.getResourceAsStream(cp)) {
+                if (in == null) throw new IOException("no classpath resource: " + cp);
+                lines = new java.io.BufferedReader(
+                        new java.io.InputStreamReader(in, StandardCharsets.UTF_8))
+                        .lines().toList();
+            }
+        } else {
+            Path path = resolvePath(url);
+            lines = Files.readAllLines(path, StandardCharsets.UTF_8);
+        }
         if (lines.isEmpty()) return java.util.Collections.emptyIterator();
         String[] header = splitCsvRow(lines.get(0));
         List<JsonNode> rows = new ArrayList<>(lines.size() - 1);

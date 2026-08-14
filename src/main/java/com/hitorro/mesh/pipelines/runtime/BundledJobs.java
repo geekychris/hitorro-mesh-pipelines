@@ -17,6 +17,7 @@ public final class BundledJobs {
     /** Order matters — first in the list shows first in the UI. */
     public static final String[] EXAMPLES = {
             "countries-triple-sink",
+            "airports-typed-enrich",
     };
 
     private BundledJobs() { }

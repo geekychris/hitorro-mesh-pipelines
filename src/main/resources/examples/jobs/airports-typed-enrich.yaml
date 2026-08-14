@@ -1,0 +1,82 @@
+# CSV → JVS-typed → enriched example.
+#
+# Demonstrates the full "one column carries dynamic-value data" pattern:
+#
+#   * `countries` node seeds an in-memory lookup table (broadcast dim).
+#   * `airports` node reads a CSV, coerces each column to a JVS-primitive
+#     type (numbers become numbers, booleans become booleans, strings stay
+#     strings), then enriches every row with continent + region values
+#     looked up from `countries` by ISO-2 code.
+#   * Two fan-out downstreams: `by-continent` groups counts + max elevation
+#     per continent; `search-index` stubs indexing the enriched airport
+#     rows into a Lucene index so downstream queries can hit them.
+#
+# Once Kafka / NATS sources land the same shape reads from a live topic
+# instead of a CSV; nothing else changes.
+job: airports-typed-enrich
+version: "1"
+nodes:
+  - id: countries
+    pipeline:
+      source: {kind: inline, rows: [
+        {iso2: US, name: "United States",  continent: NA, region: "Northern America"},
+        {iso2: GB, name: "United Kingdom", continent: EU, region: "Northern Europe"},
+        {iso2: FR, name: "France",         continent: EU, region: "Western Europe"},
+        {iso2: DE, name: "Germany",        continent: EU, region: "Western Europe"},
+        {iso2: JP, name: "Japan",          continent: AS, region: "Eastern Asia"},
+        {iso2: SG, name: "Singapore",      continent: AS, region: "South-eastern Asia"},
+        {iso2: AU, name: "Australia",      continent: OC, region: "Australia and New Zealand"},
+        {iso2: BR, name: "Brazil",         continent: SA, region: "South America"},
+        {iso2: AE, name: "UAE",            continent: AS, region: "Western Asia"},
+        {iso2: ZA, name: "South Africa",   continent: AF, region: "Sub-Saharan Africa"},
+        {iso2: CA, name: "Canada",         continent: NA, region: "Northern America"},
+        {iso2: MX, name: "Mexico",         continent: NA, region: "Central America"},
+        {iso2: IN, name: "India",          continent: AS, region: "Southern Asia"},
+        {iso2: CN, name: "China",          continent: AS, region: "Eastern Asia"}
+      ]}
+      sinks: [{kind: memory-table, name: countries-lookup}, {kind: counting, label: countries}]
+
+  - id: airports
+    depends: [countries]
+    pipeline:
+      source: {kind: csv-file, url: "classpath:/examples/data/airports-sample.csv"}
+      steps:
+        # Coerce raw CSV strings into JVS primitives. Any row where a
+        # non-null value fails coercion is dropped.
+        - {kind: to-typed, passthrough: true, fields: [
+            {name: iata,         type: core_string},
+            {name: name,         type: core_string},
+            {name: country,      type: core_string},
+            {name: elevation_ft, type: core_long},
+            {name: is_hub,       type: core_boolean}
+          ]}
+        # Enrich with continent + region by looking up the country ISO-2
+        # in the `countries-lookup` table produced by the sibling node.
+        - {kind: lookup,
+           from: countries-lookup,
+           onField: iso2,
+           withKey: country,
+           adds: [continent, region]}
+      sinks:
+        - {kind: memory-table, name: airports-enriched}
+        - {kind: ndjson-file,  url: "target/airports-enriched.ndjson"}
+        - {kind: counting,     label: airports}
+
+  - id: by-continent
+    depends: [airports]
+    pipeline:
+      source: {kind: ref, node: airports}
+      reduce:
+        group-by: [continent]
+        aggs:
+          - {name: n,        kind: COUNT}
+          - {name: max_elev, kind: MAX, of: elevation_ft}
+      sinks: [{kind: memory-table, name: airports-by-continent}, {kind: counting, label: rollup}]
+
+  - id: search-index
+    depends: [airports]
+    pipeline:
+      source: {kind: ref, node: airports}
+      sinks:
+        - {kind: lucene, name: airports-search, storeSource: true}
+        - {kind: counting, label: index}

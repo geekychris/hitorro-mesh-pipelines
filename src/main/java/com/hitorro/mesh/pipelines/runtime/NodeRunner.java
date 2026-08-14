@@ -69,7 +69,7 @@ public final class NodeRunner {
             Iterator<JsonNode> raw = wrap(sourceFactory.open(p.source()), rowsInHolder);
 
             List<Function<JsonNode, JsonNode>> compiledSteps = p.steps().stream()
-                    .map(StepFactory::compile).toList();
+                    .map(s -> StepFactory.compile(s, sinkRegistry)).toList();
             Iterator<JsonNode> stream = StepFactory.chain(raw, compiledSteps);
 
             if (p.reduce() != null) {
@@ -79,6 +79,11 @@ public final class NodeRunner {
 
             long rowsOut = 0;
             while (stream.hasNext()) {
+                if (status.cancelRequested.get()) {
+                    status.addEvent(new JobStatus.ProgressEvent(node.id(), "cancelled",
+                            "stopping mid-flight at " + rowsOut + " rows", Instant.now()));
+                    break;
+                }
                 JsonNode row = stream.next();
                 for (Sink s : sinks) {
                     try { s.add(row); }
@@ -100,9 +105,13 @@ public final class NodeRunner {
 
             for (Sink s : sinks) ns.sinkCounts.put(sinkName(s), s.count());
 
-            ns.state = JobStatus.State.SUCCEEDED;
-            status.addEvent(new JobStatus.ProgressEvent(node.id(), "done",
-                    "done: " + rowsOut + " rows", Instant.now()));
+            if (status.cancelRequested.get()) {
+                ns.state = JobStatus.State.CANCELLED;
+            } else {
+                ns.state = JobStatus.State.SUCCEEDED;
+                status.addEvent(new JobStatus.ProgressEvent(node.id(), "done",
+                        "done: " + rowsOut + " rows", Instant.now()));
+            }
         } catch (Exception e) {
             ns.state = JobStatus.State.FAILED;
             ns.error = e.getClass().getSimpleName() + ": " + e.getMessage();

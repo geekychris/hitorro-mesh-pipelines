@@ -84,6 +84,19 @@ public class PipelinesController {
         return BundledJobs.loadAll();
     }
 
+    /**
+     * Cooperative cancel. Sets the job's cancelRequested flag; NodeRunner
+     * checks it between each row and stops cleanly. Idempotent — cancelling
+     * a completed job is a no-op that still returns 200.
+     */
+    @DeleteMapping("/{jobId}")
+    public ResponseEntity<Map<String, String>> cancel(@PathVariable String jobId) {
+        JobStatus s = registry.get(jobId);
+        if (s == null) return ResponseEntity.notFound().build();
+        s.cancelRequested.set(true);
+        return ResponseEntity.ok(Map.of("jobId", jobId, "cancelRequested", "true"));
+    }
+
     private ResponseEntity<Map<String, String>> acceptAndRun(JobSpec spec) {
         // Pre-register a status skeleton so the caller can start polling
         // immediately after receiving the jobId.
