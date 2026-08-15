@@ -47,6 +47,8 @@ public final class PipelineScheduler implements AutoCloseable {
     private final HttpClient http;
     private final Object nats;         // io.nats.client.Connection when jnats present
     private final Object dispatcher;   // io.nats.client.Dispatcher when jnats present
+    private final Class<?> connIface;      // io.nats.client.Connection (interface — public methods reachable)
+    private final Class<?> dispIface;      // io.nats.client.Dispatcher (interface)
     private final java.util.Map<String, ResultAccumulator> outstanding = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
@@ -58,12 +60,13 @@ public final class PipelineScheduler implements AutoCloseable {
         this.driverBaseUrl = driverBaseUrl;
         this.http = HttpClient.newHttpClient();
         try {
+            // Interface lookups so reflective method calls resolve against
+            // the public jnats API (NatsConnectionImpl is package-private
+            // and its concrete class rejects getMethod queries at runtime).
+            this.connIface = Class.forName("io.nats.client.Connection");
+            this.dispIface = Class.forName("io.nats.client.Dispatcher");
             Class<?> natsClass = Class.forName("io.nats.client.Nats");
             this.nats = natsClass.getMethod("connect", String.class).invoke(null, natsUrl);
-            // We don't wire the dispatcher here — the driver-side result
-            // subject is subscribed on-demand per dispatch. Keeping this
-            // reflective so pipelines core doesn't force jnats on the
-            // classpath at compile time.
             this.dispatcher = null;
         } catch (Throwable e) {
             throw new IllegalStateException(
@@ -124,15 +127,13 @@ public final class PipelineScheduler implements AutoCloseable {
         env.put("resultSubject", resultSubject);
         env.put("nodeSpec", nodeYaml);
 
-        // Publish + wait for eos. Reflective NATS calls to keep pipelines
-        // core free of a hard jnats compile-time dep.
-        Class<?> connClass = nats.getClass();
-        // subscribe first so we don't miss the eos.
-        var dispatcherObj = connClass.getMethod("createDispatcher",
-                Class.forName("io.nats.client.MessageHandler")).invoke(nats,
+        // Reflective NATS via the public Connection / Dispatcher / MessageHandler
+        // interfaces so package-private impl classes don't block getMethod.
+        Class<?> handlerIface = Class.forName("io.nats.client.MessageHandler");
+        var dispatcherObj = connIface.getMethod("createDispatcher", handlerIface).invoke(nats,
                 java.lang.reflect.Proxy.newProxyInstance(
-                        connClass.getClassLoader(),
-                        new Class[]{ Class.forName("io.nats.client.MessageHandler") },
+                        handlerIface.getClassLoader(),
+                        new Class[]{ handlerIface },
                         (proxy, method, args) -> {
                             if ("onMessage".equals(method.getName())) {
                                 Object msg = args[0];
@@ -141,19 +142,18 @@ public final class PipelineScheduler implements AutoCloseable {
                             }
                             return null;
                         }));
-        dispatcherObj.getClass().getMethod("subscribe", String.class)
+        dispIface.getMethod("subscribe", String.class)
                 .invoke(dispatcherObj, resultSubject);
 
         ResultAccumulator acc = new ResultAccumulator();
         outstanding.put(taskId, acc);
 
         String targetSubject = "mesh.agent.pipeline." + agentId;
-        connClass.getMethod("publish", String.class, byte[].class)
+        connIface.getMethod("publish", String.class, byte[].class)
                 .invoke(nats, targetSubject, JSON.writeValueAsBytes(env));
-        connClass.getMethod("flush", Duration.class)
+        connIface.getMethod("flush", Duration.class)
                 .invoke(nats, Duration.ofSeconds(2));
 
-        // Wait for eos with a 60s cap.
         long deadline = System.currentTimeMillis() + 60_000;
         while (!acc.eos && System.currentTimeMillis() < deadline) {
             if (status.cancelRequested.get()) break;
@@ -161,8 +161,7 @@ public final class PipelineScheduler implements AutoCloseable {
             catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
         }
 
-        // Detach.
-        try { dispatcherObj.getClass().getMethod("unsubscribe", String.class)
+        try { dispIface.getMethod("unsubscribe", String.class)
                 .invoke(dispatcherObj, resultSubject); } catch (Exception ignored) { }
         outstanding.remove(taskId);
 
@@ -208,7 +207,7 @@ public final class PipelineScheduler implements AutoCloseable {
 
     @Override
     public void close() {
-        try { nats.getClass().getMethod("close").invoke(nats); } catch (Exception ignored) { }
+        try { connIface.getMethod("close").invoke(nats); } catch (Exception ignored) { }
     }
 
     private static final class ResultAccumulator {
