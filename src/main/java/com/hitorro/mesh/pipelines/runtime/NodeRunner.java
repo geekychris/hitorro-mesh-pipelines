@@ -134,10 +134,31 @@ public final class NodeRunner {
                 try { s.close(); }
                 catch (Exception ignored) { /* logged in per-sink error above */ }
             }
-            // Close the raw source too if it holds a real resource
-            // (NATS connection, Kafka consumer, file handle).
-            // stream-close happens implicitly on the iterator chain;
-            // this belt-and-braces catches the streaming-source case.
+            // Post-close: for any kvstore sink with registerAsTable set,
+            // materialise the memory snapshot into $HITORRO_DATASETS_HOME
+            // and POST /mesh/broadcast-tables. Best-effort — errors surface
+            // as progress events, don't fail the node.
+            for (var spec : p.sinks()) {
+                if (spec instanceof com.hitorro.mesh.pipelines.model.SinkSpec.KvStore ks
+                        && Boolean.TRUE.equals(ks.registerAsTable())) {
+                    try {
+                        String home = System.getProperty("hitorro.datasets.home",
+                                System.getProperty("user.home") + "/.hitorro/datasets");
+                        String driverUrl = System.getProperty("hitorro.pipelines.driverUrl",
+                                "http://localhost:8085");
+                        String summary = com.hitorro.mesh.pipelines.sinks.MeshTableBridge
+                                .materializeAndRegister(ks.name(),
+                                        sinkRegistry.memoryTable(node.id()),
+                                        java.nio.file.Path.of(home),
+                                        driverUrl);
+                        status.addEvent(new JobStatus.ProgressEvent(node.id(),
+                                "mesh-bridge", summary, Instant.now()));
+                    } catch (Exception e) {
+                        status.addEvent(new JobStatus.ProgressEvent(node.id(),
+                                "mesh-bridge-error", e.getMessage(), Instant.now()));
+                    }
+                }
+            }
             ns.finishedAt = Instant.now();
         }
     }

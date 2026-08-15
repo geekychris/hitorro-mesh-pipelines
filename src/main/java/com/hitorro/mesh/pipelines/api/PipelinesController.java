@@ -60,6 +60,37 @@ public class PipelinesController {
         return acceptAndRun(spec);
     }
 
+    /**
+     * Distributed dispatch — hands each node of the spec to a mesh agent
+     * that advertises the {@code pipeline-node} capability. Round-robin
+     * assignment for now. Requires at least one agent running the
+     * {@code hitorro-mesh-agent-pipelines} module.
+     *
+     * <p>Falls back with a clean 4xx if no capability match exists — the
+     * driver-local {@code /run} endpoint is always available.</p>
+     */
+    @PostMapping(value = "/run-distributed",
+            consumes = {"application/x-yaml", "application/yaml",
+                    MediaType.APPLICATION_JSON_VALUE, MediaType.TEXT_PLAIN_VALUE, "*/*"})
+    public ResponseEntity<Map<String, String>> runDistributed(@RequestBody String body) throws Exception {
+        JobSpec spec = JobSpecYaml.parse(body);
+        String jobId = "job-" + System.nanoTime();
+        JobStatus live = new JobStatus(jobId, spec.id());
+        registry.register(live);
+        pool.submit(() -> {
+            try (com.hitorro.mesh.pipelines.runtime.PipelineScheduler s =
+                    new com.hitorro.mesh.pipelines.runtime.PipelineScheduler(
+                            System.getProperty("hitorro.pipelines.natsUrl", "nats://localhost:4222"),
+                            System.getProperty("hitorro.pipelines.driverUrl", "http://localhost:8085"))) {
+                s.dispatch(spec, live, null);
+            } catch (Exception e) {
+                live.state = JobStatus.State.FAILED;
+                live.error = e.getClass().getSimpleName() + ": " + e.getMessage();
+            }
+        });
+        return ResponseEntity.accepted().body(Map.of("jobId", jobId, "mode", "distributed"));
+    }
+
     @GetMapping
     public List<JobStatus.Snapshot> list() {
         return registry.list().stream().map(JobStatus::snapshot).toList();

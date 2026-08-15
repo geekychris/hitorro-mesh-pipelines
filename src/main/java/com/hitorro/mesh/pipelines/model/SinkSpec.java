@@ -41,7 +41,10 @@ public sealed interface SinkSpec {
      * ships a stub that logs — the concrete adapter arrives with the
      * {@code hitorro-mesh-pipelines-kvstore} module.
      */
-    record KvStore(String name, String keyExpr) implements SinkSpec { }
+    record KvStore(String name, String keyExpr, Boolean registerAsTable) implements SinkSpec {
+        /** Back-compat single-arg — registerAsTable defaults to false. */
+        public KvStore(String name, String keyExpr) { this(name, keyExpr, Boolean.FALSE); }
+    }
 
     /**
      * Lucene index. {@code storeSource} toggles _source retention.
