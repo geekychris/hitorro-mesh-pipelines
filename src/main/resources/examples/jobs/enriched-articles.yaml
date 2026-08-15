@@ -1,24 +1,27 @@
-# Enriched articles — demonstrates the KV round-trip that the fleet-retrieval
-# `fetch` stage relies on.
+# Enriched articles — full JVS-typed pipeline end-to-end.
 #
-# Pipeline: inline articles → groovy-map that mimics NLP enrichment
-# (sentence segmentation, word counts, naive key-term extraction, JVS type
-# stamping) → written to BOTH a Lucene index (for querying) AND a RocksDB
-# KV store keyed by id (for fetching the rich enriched JSON later).
-#
-# The enrichment does not require the OpenNLP or ONNX models — it fakes
-# the shape a real NLP enricher would produce so the retrieval round-trip
-# is demonstrable end-to-end without needing HT_HOME wired up. Swap the
-# groovy-map for a jvs-groovy step with EnrichOperations when the real
-# NLP pipeline is desired.
+# Pipeline: inline articles →
+#   1. groovy-map                 reshapes rows into proper JVS shape
+#      (id.{domain,did,id}, title.mls[], body.mls[], times, …)
+#   2. jvs-enrich                 runs the type-system enrichment projection
+#      (OpenNLP-backed sentence-segmenter + POS tagger + NER); populates
+#      title.mls[].segmented, .pos, .segmented_ner and same on body.
+#      Needs models under ${HT_BIN}/data/opennlpmodels1.5/ — install with
+#      ./scripts/install-nlp-models.sh from hitorro-mesh-datasets.
+#      Gracefully skips per-field if models absent (row still flows).
+#   3. jvs-translate              hits local Ollama (llama3.2) to translate
+#      title + body into Spanish, French, German. Appends new mls entries
+#      per lang. If Ollama isn't running, skips silently — pipeline still
+#      succeeds. Prereq:  brew install ollama; ollama serve; ollama pull llama3.2
+#   4. sinks                      lucene (type-aware) + kvstore
 #
 # After running:
-#   1. Fleet tab → make sure fleet-retrieval is UP.
-#   2. Search tab → Backend = fleet-retrieval → pick `articles` from the
-#      Indexes list.
-#   3. Tick the `fetch` stage in the query builder → 🔍 Run.
-#      Documents come back with the full enriched JSON (sentences,
-#      key_terms, POS-flavored counters) pulled from the KV store.
+#   1. Fleet tab → fleet-retrieval UP.
+#   2. Search tab → Backend = fleet-retrieval → pick `articles`.
+#   3. Tick the `fetch` stage → 🔍 Run.
+#      Expanded rows show the fully enriched JVS: id.{domain,did,id},
+#      title.mls[]/body.mls[] with per-lang entries (en, es, fr, de)
+#      each carrying segmented / pos / segmented_ner sub-fields.
 job: enriched-articles
 version: "1"
 nodes:
@@ -75,6 +78,23 @@ nodes:
             def words = bodyText.split(/\s+/).findAll { it }
             out.keywords = words.findAll { it =~ /^[A-Z][a-zA-Z]{2,}/ }.unique().take(8)
             return out
+        # ── Real JVS enrichment. Runs the type-system projection with
+        # basic + segmented + pos + ner tag filters — populates every
+        # mls entry's segmented, pos, segmented_ner dynamic sub-fields
+        # via the OpenNLP mappers registered in config/implementations.json.
+        # Models: ${HT_BIN}/data/opennlpmodels1.5/en-{sent,token,pos-maxent,
+        # ner-person,ner-location,ner-organization,ner-date,ner-money}.bin
+        - kind: jvs-enrich
+          typeJsonResource: "classpath:/types/demo_enriched_article.json"
+          tags: [basic, segmented, pos, ner]
+        # ── LLM translation. Adds Spanish, French, German variants to
+        # every mls-shaped field via local Ollama (llama3.2). Idempotent:
+        # skips langs that already have an mls entry. Silently skips
+        # everything if Ollama is unreachable.
+        - kind: jvs-translate
+          sourceLang: en
+          targetLangs: [es, fr, de]
+          mlsFields: [title, body]
       sinks:
         # Type-aware Lucene index. jvs-lucene wraps each row as a
         # JVS(type=demo_enriched_article) then uses JVSLuceneIndexWriter

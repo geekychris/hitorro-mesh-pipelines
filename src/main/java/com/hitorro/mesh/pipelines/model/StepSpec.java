@@ -22,6 +22,8 @@ import java.util.List;
     @JsonSubTypes.Type(value = StepSpec.Lookup.class,     name = "lookup"),
     @JsonSubTypes.Type(value = StepSpec.GroovyMap.class,  name = "groovy-map"),
     @JsonSubTypes.Type(value = StepSpec.JvsGroovy.class,  name = "jvs-groovy"),
+    @JsonSubTypes.Type(value = StepSpec.JvsEnrich.class,  name = "jvs-enrich"),
+    @JsonSubTypes.Type(value = StepSpec.JvsTranslate.class, name = "jvs-translate"),
     @JsonSubTypes.Type(value = StepSpec.Jvssql.class,     name = "jvssql"),
 })
 public sealed interface StepSpec {
@@ -115,6 +117,41 @@ public sealed interface StepSpec {
      * time (via the StepAdapter SPI miss).</p>
      */
     record JvsGroovy(String script, String typeJson) implements StepSpec { }
+
+    /**
+     * Runs the JVS type-system enrichment projection over every row —
+     * populates the dynamic sub-fields declared on the type's core_mls
+     * fields (e.g. {@code title.mls[].clean}, {@code .segmented},
+     * {@code .pos}, {@code .segmented_ner}) via the mappers registered
+     * in {@code config/implementations.json}.
+     *
+     * <p>{@code tags} filters which enrichment groups run — matches the
+     * {@code tags} array on {@code groups} entries in the type. Typical
+     * values: {@code basic} (default), {@code segmented}, {@code pos},
+     * {@code ner}, {@code parsed}. Pass an empty list to run every
+     * enrichment group present on the type.</p>
+     *
+     * <p>Requires the {@code hitorro-mesh-pipelines-jvstype} adapter on
+     * the classpath AND OpenNLP models under
+     * {@code ${HT_BIN}/data/opennlpmodels1.5/&lt;lang&gt;-*.bin} —
+     * install with {@code scripts/install-nlp-models.sh}.</p>
+     */
+    record JvsEnrich(List<String> tags, String typeJsonResource) implements StepSpec { }
+
+    /**
+     * Runs a local LLM (Ollama by default, {@code llama3.2}) to translate
+     * every {@code core_mls} field on the row into the given target
+     * languages. Each translated variant is appended as a new element in
+     * the field's {@code mls[]} array, so downstream JVSLuceneIndexWriter
+     * lands a per-lang analyzed Lucene field automatically.
+     *
+     * <p>Reachable at {@code ${ollamaUrl}} (default
+     * {@code http://localhost:11434}); {@code model} defaults to
+     * {@code llama3.2}. Skips text that already has an mls entry for the
+     * target lang.</p>
+     */
+    record JvsTranslate(List<String> targetLangs, String sourceLang,
+                        List<String> mlsFields, String ollamaUrl, String model) implements StepSpec { }
 
     /** Run a SQL query treating the incoming rows as an in-memory table. */
     record Jvssql(String sql) implements StepSpec { }

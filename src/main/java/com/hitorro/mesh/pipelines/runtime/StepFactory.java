@@ -55,6 +55,10 @@ public final class StepFactory {
             case StepSpec.GroovyMap s -> GroovyMapStep.compile(s.script());
             case StepSpec.JvsGroovy s -> throw new UnsupportedOperationException(
                     "jvs-groovy needs hitorro-mesh-pipelines-jvstype on the classpath");
+            case StepSpec.JvsEnrich s -> throw new UnsupportedOperationException(
+                    "jvs-enrich needs hitorro-mesh-pipelines-jvstype on the classpath");
+            case StepSpec.JvsTranslate s -> throw new UnsupportedOperationException(
+                    "jvs-translate needs hitorro-mesh-pipelines-jvstype on the classpath");
             case StepSpec.Jvssql    s -> throw new UnsupportedOperationException(
                     "jvssql is Phase 2 (add the jvssql adapter)");
         };
