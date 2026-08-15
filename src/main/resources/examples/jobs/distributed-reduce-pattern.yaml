@@ -1,0 +1,93 @@
+# Distributed reduce — TWO-PHASE pattern that scales across agents
+# today, without auto-shuffle-reduce infrastructure.
+#
+# WORKS via /mesh/jobs/run (local) — all tasks share the driver's
+#   JobRunner, so memory tables cross node boundaries.
+#
+# CAVEAT via /mesh/jobs/run-distributed — each task gets its own
+#   JobRunner on its assigned agent, so ref-source and memory-table
+#   sinks don't reach across tasks. Partial reductions still work
+#   (partial-us writes kvstore:partial-us on agent-us, partial-eu
+#   writes kvstore:partial-eu on agent-eu) — but the combine node's
+#   ref source returns empty because memory-table:partial-us doesn't
+#   exist in the agent-us JVM the combine got scheduled onto (unless
+#   the locality pick coincidentally sent it there). Genuine merged
+#   combine across agents needs auto-shuffle-reduce — deferred slice.
+#
+# Structure:
+#   * partial-us  → runs on agent-us (locality), computes partial
+#                    aggregates from a subset of the source
+#   * partial-eu  → runs on agent-eu (locality), same shape on the
+#                    other subset
+#   * combine     → depends on both, reads their KV outputs, does the
+#                    final aggregation
+#
+# Each partial-* is a full local reduce over its slice. The combine
+# is a reduce over reduces (SUM of COUNTs = COUNT; SUM of SUMs = SUM;
+# MAX of MAXes = MAX; MIN of MINs = MIN). AVG needs SUM+COUNT partials
+# and division at the combine — call out in a comment on that agg.
+#
+# Locality-aware placement (scheduler feature): after partial-us writes
+# to kvstore partial-us, if combine reads {kind: kvstore, name: partial-
+# us} it lands on agent-us automatically. Here we keep combine as a
+# multi-source, so it runs on whichever agent has the fewest tasks.
+#
+# Kick this via POST /mesh/jobs/run-distributed to see the fan-out.
+job: distributed-reduce
+version: "1"
+nodes:
+  # US partition — one third of the data plus some overlap.
+  - id: partial-us
+    pipeline:
+      source: {kind: inline, rows: [
+        {region: NA, val: 10}, {region: NA, val: 20}, {region: NA, val: 30},
+        {region: SA, val: 15}, {region: SA, val: 25}
+      ]}
+      reduce:
+        group-by: [region]
+        aggs:
+          - {name: n_partial, kind: COUNT}
+          - {name: sum_partial, kind: SUM, of: val}
+          - {name: max_partial, kind: MAX, of: val}
+      sinks:
+        - {kind: kvstore, name: partial-us, keyExpr: region}
+        - {kind: counting, label: partial-us}
+
+  # EU partition — another third; overlaps SA on purpose to prove the
+  # combine actually merges rows from different agents.
+  - id: partial-eu
+    pipeline:
+      source: {kind: inline, rows: [
+        {region: EU, val: 40}, {region: EU, val: 50}, {region: EU, val: 60},
+        {region: SA, val: 35}
+      ]}
+      reduce:
+        group-by: [region]
+        aggs:
+          - {name: n_partial, kind: COUNT}
+          - {name: sum_partial, kind: SUM, of: val}
+          - {name: max_partial, kind: MAX, of: val}
+      sinks:
+        - {kind: kvstore, name: partial-eu, keyExpr: region}
+        - {kind: counting, label: partial-eu}
+
+  # Combine — reads BOTH partials as memory-tables (the auto-attached
+  # memory-table sink of each partial node); reduces over regions
+  # aggregating the partial columns into the final ones.
+  - id: combine
+    depends: [partial-us, partial-eu]
+    pipeline:
+      # No native "union of refs" today — chain through a ref of one
+      # and a lookup for the other. This is where auto-shuffle-reduce
+      # would emit a real multi-source combiner. Documented pattern
+      # limitation until that slice lands.
+      source: {kind: ref, node: partial-us}
+      steps:
+        - {kind: lookup,
+           from: partial-eu,
+           onField: region,
+           withKey: region,
+           adds: [n_partial, sum_partial, max_partial]}
+      sinks:
+        - {kind: memory-table, name: combined}
+        - {kind: counting, label: combine}

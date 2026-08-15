@@ -81,7 +81,8 @@ public class PipelinesController {
             try (com.hitorro.mesh.pipelines.runtime.PipelineScheduler s =
                     new com.hitorro.mesh.pipelines.runtime.PipelineScheduler(
                             System.getProperty("hitorro.pipelines.natsUrl", "nats://localhost:4222"),
-                            System.getProperty("hitorro.pipelines.driverUrl", "http://localhost:8085"))) {
+                            System.getProperty("hitorro.pipelines.driverUrl", "http://localhost:8085"),
+                            SINK_LOCATIONS)) {
                 s.dispatch(spec, live, null);
             } catch (Exception e) {
                 live.state = JobStatus.State.FAILED;
@@ -89,6 +90,21 @@ public class PipelinesController {
             }
         });
         return ResponseEntity.accepted().body(Map.of("jobId", jobId, "mode", "distributed"));
+    }
+
+    /** Shared persistent sink-location registry — reloaded on startup. */
+    private static final com.hitorro.mesh.pipelines.runtime.SinkLocationRegistry SINK_LOCATIONS =
+            com.hitorro.mesh.pipelines.runtime.SinkLocationRegistry.defaultOnDisk();
+
+    /**
+     * Which agent holds each named persistent sink. Empty until at
+     * least one distributed job has written to a kvstore or lucene
+     * sink. Reloaded from ~/.hitorro/pipelines/sink-locations.json on
+     * driver startup.
+     */
+    @GetMapping("/sink-locations")
+    public Map<String, String> sinkLocations() {
+        return SINK_LOCATIONS.snapshot();
     }
 
     @GetMapping

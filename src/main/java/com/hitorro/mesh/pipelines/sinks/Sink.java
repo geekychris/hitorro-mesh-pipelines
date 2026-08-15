@@ -21,6 +21,21 @@ public interface Sink extends AutoCloseable {
     /** Consume one row. */
     void add(JsonNode row) throws Exception;
 
+    /**
+     * Idempotent write — sinks that support it should dedupe by
+     * ({@code taskId}, {@code seq}) so retried tasks don't double-write.
+     * Default implementation ignores the identity and calls {@link #add}
+     * (at-least-once semantics; safe when the task never retries).
+     *
+     * <p>Adapters that back a persistent store (RocksDB, Lucene) should
+     * override — track the highest seq seen per taskId and skip earlier
+     * ones. The scheduler bumps a per-task counter and passes it here
+     * so retry re-plays deterministically.</p>
+     */
+    default void addIdempotent(String taskId, long seq, JsonNode row) throws Exception {
+        add(row);
+    }
+
     /** Total rows written since open — surfaced in job status. */
     long count();
 

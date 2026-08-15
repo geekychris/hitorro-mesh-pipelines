@@ -24,6 +24,7 @@ public final class BundledJobs {
             "kv-write",
             "kv-read",
             "distributed-fanout",
+            "distributed-reduce-pattern",
     };
 
     private BundledJobs() { }
