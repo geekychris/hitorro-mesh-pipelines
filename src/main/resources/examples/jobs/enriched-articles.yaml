@@ -25,46 +25,56 @@ nodes:
   - id: articles
     pipeline:
       source: {kind: inline, rows: [
-        {id: "a1", title: "London Heathrow expansion", country: GB,
-         body: "London Heathrow Airport announced a third runway plan. The government approved the environmental impact review. Construction is expected to begin in 2028. Airlines welcomed the decision. Residents in nearby villages raised noise concerns."},
-        {id: "a2", title: "Tokyo Narita bullet-train link", country: JP,
-         body: "A new Shinkansen extension will connect Tokyo Narita to central Tokyo in under thirty minutes. Trials are underway on the eastern segment. The Japan Railways operator confirmed the timeline. Local commuters expect major benefits during peak hours."},
-        {id: "a3", title: "Singapore Changi biometric lanes", country: SG,
-         body: "Singapore Changi Airport rolled out biometric-only immigration lanes at Terminal 4. Passengers no longer need to present a passport at any checkpoint. The system uses face and iris recognition. Privacy advocates asked for a public audit."},
-        {id: "a4", title: "Dubai Metro extension", country: AE,
-         body: "The Dubai Metro Red Line was extended to Expo City. Trains now run every four minutes during rush hour. The extension cost 2.5 billion dirhams. Passenger volume beat forecasts in the first month."},
-        {id: "a5", title: "São Paulo airport rail", country: BR,
-         body: "São Paulo Guarulhos International will get a direct rail link to the city center. The project has federal and state funding. Construction begins next quarter. Airport officials estimate a fifty-percent reduction in road congestion."}
+        {_id: "a1", _title: "London Heathrow expansion", country: GB,
+         _body: "London Heathrow Airport announced a third runway plan. The government approved the environmental impact review. Construction is expected to begin in 2028. Airlines welcomed the decision. Residents in nearby villages raised noise concerns."},
+        {_id: "a2", _title: "Tokyo Narita bullet-train link", country: JP,
+         _body: "A new Shinkansen extension will connect Tokyo Narita to central Tokyo in under thirty minutes. Trials are underway on the eastern segment. The Japan Railways operator confirmed the timeline. Local commuters expect major benefits during peak hours."},
+        {_id: "a3", _title: "Singapore Changi biometric lanes", country: SG,
+         _body: "Singapore Changi Airport rolled out biometric-only immigration lanes at Terminal 4. Passengers no longer need to present a passport at any checkpoint. The system uses face and iris recognition. Privacy advocates asked for a public audit."},
+        {_id: "a4", _title: "Dubai Metro extension", country: AE,
+         _body: "The Dubai Metro Red Line was extended to Expo City. Trains now run every four minutes during rush hour. The extension cost 2.5 billion dirhams. Passenger volume beat forecasts in the first month."},
+        {_id: "a5", _title: "São Paulo airport rail", country: BR,
+         _body: "São Paulo Guarulhos International will get a direct rail link to the city center. The project has federal and state funding. Construction begins next quarter. Airport officials estimate a fifty-percent reduction in road congestion."}
       ]}
       steps:
-        # ── "enrichment" step: computes fields a real NLP pipeline
-        # would populate (sentence segmentation, term extraction, POS
-        # counters). Faked with regex/string ops so the demo runs
-        # without OpenNLP / ONNX models on the classpath. ──
+        # ── Reshape each inline row into a proper JVS-typed
+        # demo_enriched_article. That means:
+        #   * id → { domain, did, id } per core_id
+        #   * title → { mls: [ { lang, text, clean } ] } per core_mls
+        #   * body  → same shape
+        #   * times → { created, modified } per core_dates
+        # The mls sub-fields the JVS enrichment engine would compute
+        # (segmented, pos, segmented_ner, …) stay absent — they get
+        # populated when the enrichment engine (JVS2JVSEnrichMapper +
+        # OpenNLP / ONNX models) runs against this doc downstream.
+        # For now we populate `clean` = `text` since we're not running
+        # HTML scrubbing.
         - kind: groovy-map
           script: |
-            def body = (row.body ?: '').toString()
-            def sentences = body.split(/(?<=[.!?])\s+/).findAll { it }
-            def words     = body.split(/\s+/).findAll { it }
-            def capWords  = words.findAll { it =~ /^[A-Z][a-zA-Z]{2,}/ }
+            def bodyText  = (row._body  ?: '').toString()
+            def titleText = (row._title ?: '').toString()
+            def id  = (row._id  ?: '').toString()
 
-            row.type            = 'demo_article'
-            row.sentence_count  = sentences.size()
-            row.word_count      = words.size()
-            row.char_length     = body.length()
-            row.sentences       = sentences.collect { s ->
-              [text: s.trim(), word_count: s.split(/\s+/).findAll{it}.size()]
-            }
-            row.key_terms       = capWords.unique().take(8)
-            row.avg_sentence_len = sentences ? Math.round((double)words.size() / sentences.size()) : 0
-            row.pos_counters    = [
-              nouns_est:  capWords.size(),
-              verbs_est:  words.count { it ==~ /(?i)(is|are|was|were|will|has|have|had|announced|approved|rolled|extended|begins|connect|cost|welcomed|raised|expect|got)/ },
-              numbers:    words.count { it ==~ /^\d.*/ }
+            def out = [
+              type:    'demo_enriched_article',
+              // id.id populated with "<domain>/<did>" so it lines up with
+              // DocumentRetriever's compound-key shape and the KV sink's
+              // keyExpr:"id.id" below — writer + reader use the same key.
+              id:      [ domain: 'articles', did: id, id: 'articles/' + id ],
+              title:   [ mls: [[ lang: 'en', text: titleText, clean: titleText ]] ],
+              body:    [ mls: [[ lang: 'en', text: bodyText,  clean: bodyText  ]] ],
+              times:   [ created: gen.now(), modified: gen.now() ],
+              country: (row.country ?: null),
+              category: [ 'news' ],
+              tags:     [ 'transport', 'infrastructure' ]
             ]
-            row.enriched_at     = gen.now()
-            row.event_id        = gen.uuid()
-            return row
+            // A naive keyword extraction just so the vector-shaped
+            // keywords field has something meaningful — real
+            // enrichment via JVS2JVSEnrichMapper would populate the
+            // per-lang mls.pos / mls.segmented_ner fields instead.
+            def words = bodyText.split(/\s+/).findAll { it }
+            out.keywords = words.findAll { it =~ /^[A-Z][a-zA-Z]{2,}/ }.unique().take(8)
+            return out
       sinks:
         # Type-aware Lucene index. jvs-lucene wraps each row as a
         # JVS(type=demo_enriched_article) then uses JVSLuceneIndexWriter
@@ -82,7 +92,9 @@ nodes:
         - {kind: jvs-lucene, name: articles,
            typeJsonResource: "classpath:/types/demo_enriched_article.json",
            storeSource: false}
-        # KV store: keyed by id — this is what the retrieval `fetch`
-        # stage pulls to enrich hits with the full rich enriched JSON.
-        - {kind: kvstore,  name: articles, keyExpr: "id"}
+        # KV store: keyed by id.id ("<domain>/<did>") — matches the
+        # compound key DocumentRetriever computes from id.domain +
+        # id.did on the reader side, so the retrieval `fetch` stage
+        # pulls the full rich JVS back on match.
+        - {kind: kvstore,  name: articles, keyExpr: "id.id"}
         - {kind: counting, label: enriched}
