@@ -74,9 +74,48 @@ public final class SourceFactory {
                     "kvstore source is Phase 2 (needs the kvstore adapter)");
             case SourceSpec.Lucene     s -> throw new UnsupportedOperationException(
                     "lucene source is Phase 2 (needs the lucene adapter)");
-            case SourceSpec.Sql        s -> throw new UnsupportedOperationException(
-                    "sql source is Phase 2 (needs the jvssql adapter)");
+            case SourceSpec.Sql        s -> openSql(s.sql());
         };
+    }
+
+    /**
+     * Runs a mesh SQL query via HTTP against the local driver and iterates
+     * the returned rows. The driver's {@code /mesh/queries} endpoint handles
+     * planning + dispatch to agents — this pipeline source just consumes
+     * the result set.
+     *
+     * <p>Configured via {@code hitorro.pipelines.driverUrl} (defaults to
+     * {@code http://localhost:8085}). Timeout is 30s — override via
+     * {@code hitorro.pipelines.sqlTimeoutMs}.</p>
+     */
+    private Iterator<JsonNode> openSql(String sql) throws IOException {
+        String driverUrl = System.getProperty("hitorro.pipelines.driverUrl",
+                "http://localhost:8085");
+        int timeoutMs = Integer.parseInt(
+                System.getProperty("hitorro.pipelines.sqlTimeoutMs", "30000"));
+        String body = JSON.writeValueAsString(java.util.Map.of(
+                "sql", sql, "timeoutMs", timeoutMs, "semantic", false));
+        try {
+            var req = java.net.http.HttpRequest.newBuilder()
+                    .uri(java.net.URI.create(driverUrl + "/mesh/queries"))
+                    .header("Content-Type", "application/json")
+                    .timeout(java.time.Duration.ofMillis(timeoutMs + 5000))
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+            var resp = java.net.http.HttpClient.newHttpClient().send(req,
+                    java.net.http.HttpResponse.BodyHandlers.ofString());
+            JsonNode result = JSON.readTree(resp.body());
+            if (result.has("error")) {
+                throw new IOException("sql source error: " + result.get("message").asText());
+            }
+            JsonNode rows = result.get("rows");
+            if (rows == null || !rows.isArray()) return java.util.Collections.emptyIterator();
+            java.util.List<JsonNode> out = new java.util.ArrayList<>(rows.size());
+            rows.forEach(out::add);
+            return out.iterator();
+        } catch (java.io.IOException | InterruptedException e) {
+            throw new IOException("sql source failed: " + e.getMessage(), e);
+        }
     }
 
     // ------------------------------------------------------------ NATS (streaming)
