@@ -87,6 +87,8 @@ public class PipelinesController {
             } catch (Exception e) {
                 live.state = JobStatus.State.FAILED;
                 live.error = e.getClass().getSimpleName() + ": " + e.getMessage();
+            } finally {
+                registry.onTerminal(live);
             }
         });
         return ResponseEntity.accepted().body(Map.of("jobId", jobId, "mode", "distributed"));
@@ -110,6 +112,23 @@ public class PipelinesController {
     @GetMapping
     public List<JobStatus.Snapshot> list() {
         return registry.list().stream().map(JobStatus::snapshot).toList();
+    }
+
+    /**
+     * Full persistent job history — one entry per completed run, most
+     * recent first. Reads from {@code ~/.hitorro/pipelines/jobs.ndjson}
+     * (or wherever {@link com.hitorro.mesh.pipelines.runtime.JobHistoryStore}
+     * was pointed). Survives driver restarts.
+     */
+    @GetMapping("/history")
+    public List<com.hitorro.mesh.pipelines.runtime.JobHistoryStore.HistoryEntry> history(
+            @RequestParam(value = "limit", defaultValue = "200") int limit) {
+        var store = registry.history();
+        if (store == null) return List.of();
+        var all = store.tail(limit);
+        // reverse — most recent first
+        java.util.Collections.reverse(all);
+        return all;
     }
 
     @GetMapping("/{jobId}")
@@ -151,7 +170,10 @@ public class PipelinesController {
         String jobId = "job-" + System.nanoTime();
         JobStatus live = new JobStatus(jobId, spec.id());
         registry.register(live);
-        pool.submit(() -> runner.run(spec, live));
+        pool.submit(() -> {
+            try { runner.run(spec, live); }
+            finally { registry.onTerminal(live); }
+        });
         return ResponseEntity.accepted().body(Map.of("jobId", jobId));
     }
 }

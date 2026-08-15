@@ -13,15 +13,48 @@ import java.util.concurrent.ConcurrentMap;
  * Bounded in-memory registry of past + running jobs. Ring-buffer semantics:
  * the oldest completed run is evicted once the cap is hit. Running jobs
  * are never evicted.
+ *
+ * <p>When a {@link JobHistoryStore} is attached, every terminal transition
+ * (SUCCEEDED / FAILED / CANCELLED) is appended to disk so the run history
+ * survives driver restarts. On construction, the tail of that store is
+ * replayed into memory as compact placeholder JobStatus entries so the
+ * UI immediately shows the last few runs after a boot.</p>
  */
 public final class JobRegistry {
 
     private final int capacity;
+    private final JobHistoryStore history;
     private final ConcurrentMap<String, JobStatus> byId = new ConcurrentHashMap<>();
     private final List<String> order = Collections.synchronizedList(new ArrayList<>());
 
     public JobRegistry(int capacity) {
+        this(capacity, null);
+    }
+
+    public JobRegistry(int capacity, JobHistoryStore history) {
         this.capacity = capacity;
+        this.history = history;
+        if (history != null) replay();
+    }
+
+    /** Load the tail of the persistent history into in-memory placeholders. */
+    private void replay() {
+        for (JobHistoryStore.HistoryEntry e : history.tail(capacity)) {
+            JobStatus s = new JobStatus(e.jobId(), e.jobSpecName());
+            try {
+                s.state = JobStatus.State.valueOf(e.state());
+            } catch (Exception ignore) { s.state = JobStatus.State.SUCCEEDED; }
+            if (e.finishedAt() != null) {
+                try { s.finishedAt = java.time.Instant.parse(e.finishedAt()); }
+                catch (Exception ignore) {}
+            }
+            s.error = e.error();
+            // Node-level detail is preserved in the snapshot() view on demand;
+            // we don't reconstruct the full NodeStatus map here because the
+            // volatile counters would be misleading (job is already terminal).
+            byId.put(s.jobId, s);
+            synchronized (order) { order.add(s.jobId); }
+        }
     }
 
     public JobStatus register(JobStatus s) {
@@ -39,6 +72,14 @@ public final class JobRegistry {
         return s;
     }
 
+    /** Called by the runner when a job hits a terminal state — persists to disk. */
+    public void onTerminal(JobStatus s) {
+        if (history != null && s.state != JobStatus.State.RUNNING
+                            && s.state != JobStatus.State.PENDING) {
+            history.append(s);
+        }
+    }
+
     public JobStatus get(String jobId) { return byId.get(jobId); }
 
     public List<JobStatus> list() {
@@ -52,4 +93,7 @@ public final class JobRegistry {
             return out;
         }
     }
+
+    /** History source if attached (nullable). */
+    public JobHistoryStore history() { return history; }
 }

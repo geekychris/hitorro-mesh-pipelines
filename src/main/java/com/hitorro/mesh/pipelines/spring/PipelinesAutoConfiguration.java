@@ -4,9 +4,12 @@
 package com.hitorro.mesh.pipelines.spring;
 
 import com.hitorro.mesh.pipelines.api.PipelinesController;
+import com.hitorro.mesh.pipelines.runtime.JobHistoryStore;
 import com.hitorro.mesh.pipelines.runtime.JobRegistry;
 import com.hitorro.mesh.pipelines.runtime.JobRunner;
 import com.hitorro.mesh.pipelines.sinks.SinkRegistry;
+
+import java.nio.file.Paths;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -36,8 +39,17 @@ public class PipelinesAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public JobRegistry pipelinesJobRegistry() {
-        return new JobRegistry(64);
+    public JobHistoryStore pipelinesJobHistoryStore() {
+        String home = System.getProperty("hitorro.pipelines.home",
+                System.getenv().getOrDefault("HITORRO_PIPELINES_HOME",
+                        System.getProperty("user.home") + "/.hitorro/pipelines"));
+        return new JobHistoryStore(Paths.get(home, "jobs.ndjson"));
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public JobRegistry pipelinesJobRegistry(JobHistoryStore history) {
+        return new JobRegistry(64, history);
     }
 
     @Bean
