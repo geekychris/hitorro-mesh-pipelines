@@ -71,6 +71,8 @@ public final class JobStatus {
         public volatile Instant startedAt;
         public volatile Instant finishedAt;
         public volatile String error;
+        /** Agent that ran this node (null when not dispatched, e.g. driver-local). */
+        public volatile String assignedAgent;
         public final Map<String, Long> sinkCounts = new LinkedHashMap<>();
 
         NodeStatus(String id) { this.id = id; }
@@ -79,7 +81,7 @@ public final class JobStatus {
             return new NodeStatusSnapshot(id, state.name(), rowsIn, rowsOut,
                     startedAt == null ? null : startedAt.toString(),
                     finishedAt == null ? null : finishedAt.toString(),
-                    error, new LinkedHashMap<>(sinkCounts));
+                    error, assignedAgent, new LinkedHashMap<>(sinkCounts));
         }
     }
 
@@ -94,5 +96,6 @@ public final class JobStatus {
     public record NodeStatusSnapshot(String id, String state,
                                      long rowsIn, long rowsOut,
                                      String startedAt, String finishedAt,
-                                     String error, Map<String, Long> sinkCounts) { }
+                                     String error, String assignedAgent,
+                                     Map<String, Long> sinkCounts) { }
 }

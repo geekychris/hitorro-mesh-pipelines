@@ -23,6 +23,7 @@ public final class BundledJobs {
             "airports-groovy",
             "kv-write",
             "kv-read",
+            "distributed-fanout",
     };
 
     private BundledJobs() { }

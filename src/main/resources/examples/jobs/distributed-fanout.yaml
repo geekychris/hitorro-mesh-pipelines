@@ -1,0 +1,47 @@
+# Distributed pipeline example — 4 independent nodes that each
+# process their own slice. Round-robin scheduling puts alternate
+# nodes on alternate agents; run this via POST /mesh/jobs/run-
+# distributed and watch the Mesh viz light up.
+#
+#   node-a → agent-us     (least-loaded)
+#   node-b → agent-eu     (least-loaded after -us gained one)
+#   node-c → agent-us     (round-robin)
+#   node-d → agent-eu     (round-robin)
+#
+# When a downstream node uses source: {kind: ref, ...} it co-locates
+# with its upstream — data locality without a network hop. The
+# combined node runs on whichever agent its upstream ran on.
+job: distributed-fanout
+version: "1"
+nodes:
+  - id: node-a
+    pipeline:
+      source: {kind: inline, rows: [
+        {region: NA, val: 10}, {region: NA, val: 20}, {region: NA, val: 30}
+      ]}
+      steps: [{kind: set-field, name: worker, value: "a"}]
+      sinks: [{kind: memory-table, name: fanout-a}, {kind: counting, label: a}]
+
+  - id: node-b
+    pipeline:
+      source: {kind: inline, rows: [
+        {region: EU, val: 40}, {region: EU, val: 50}
+      ]}
+      steps: [{kind: set-field, name: worker, value: "b"}]
+      sinks: [{kind: memory-table, name: fanout-b}, {kind: counting, label: b}]
+
+  - id: node-c
+    pipeline:
+      source: {kind: inline, rows: [
+        {region: AS, val: 60}, {region: AS, val: 70}, {region: AS, val: 80}, {region: AS, val: 90}
+      ]}
+      steps: [{kind: set-field, name: worker, value: "c"}]
+      sinks: [{kind: memory-table, name: fanout-c}, {kind: counting, label: c}]
+
+  - id: node-d
+    pipeline:
+      source: {kind: inline, rows: [
+        {region: SA, val: 100}
+      ]}
+      steps: [{kind: set-field, name: worker, value: "d"}]
+      sinks: [{kind: memory-table, name: fanout-d}, {kind: counting, label: d}]

@@ -8,6 +8,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.hitorro.mesh.pipelines.model.JobSpec;
 import com.hitorro.mesh.pipelines.model.NodeSpec;
+import com.hitorro.mesh.pipelines.model.SinkSpec;
+import com.hitorro.mesh.pipelines.model.SourceSpec;
 import com.hitorro.mesh.pipelines.parse.JobSpecYaml;
 
 import java.net.URI;
@@ -42,6 +44,8 @@ public final class PipelineScheduler implements AutoCloseable {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final AtomicLong TASK_SEQ = new AtomicLong();
 
+    private static final int MAX_RETRIES = 2;
+
     private final String natsUrl;
     private final String driverBaseUrl;
     private final HttpClient http;
@@ -50,14 +54,24 @@ public final class PipelineScheduler implements AutoCloseable {
     private final Class<?> connIface;      // io.nats.client.Connection (interface — public methods reachable)
     private final Class<?> dispIface;      // io.nats.client.Dispatcher (interface)
     private final java.util.Map<String, ResultAccumulator> outstanding = new java.util.concurrent.ConcurrentHashMap<>();
+    private final SinkLocationRegistry sinkLocations;
+    /** Rolling counter of tasks-per-agent for round-robin fallback. */
+    private final java.util.Map<String, java.util.concurrent.atomic.AtomicLong> agentTaskCounts
+            = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
      * @param natsUrl        NATS server URL (usually {@code nats://localhost:4222})
      * @param driverBaseUrl  where the driver's REST endpoints live
      */
     public PipelineScheduler(String natsUrl, String driverBaseUrl) throws Exception {
+        this(natsUrl, driverBaseUrl, new SinkLocationRegistry());
+    }
+
+    public PipelineScheduler(String natsUrl, String driverBaseUrl,
+                             SinkLocationRegistry sinkLocations) throws Exception {
         this.natsUrl = natsUrl;
         this.driverBaseUrl = driverBaseUrl;
+        this.sinkLocations = sinkLocations;
         this.http = HttpClient.newHttpClient();
         try {
             // Interface lookups so reflective method calls resolve against
@@ -93,11 +107,51 @@ public final class PipelineScheduler implements AutoCloseable {
                                     + "and set hitorro.mesh.pipelines.enabled=true");
                 }
             }
-            for (int i = 0; i < spec.nodes().size(); i++) {
+            // Track per-node placement so downstream ref-source nodes can
+            // co-locate with their upstream, and record persistent-sink
+            // writes into the registry so future jobs benefit too.
+            java.util.Map<String, String> nodeToAgent = new java.util.HashMap<>();
+            for (NodeSpec node : spec.nodes()) {
                 if (status.cancelRequested.get()) break;
-                NodeSpec node = spec.nodes().get(i);
-                String agentId = targetAgents.get(i % targetAgents.size());
-                dispatchOne(node, agentId, status);
+                String preferred = pickAgent(node, targetAgents, nodeToAgent);
+                java.util.Set<String> blacklist = new java.util.HashSet<>();
+                boolean ok = false;
+                Throwable lastErr = null;
+                for (int attempt = 0; attempt <= MAX_RETRIES && !ok; attempt++) {
+                    String candidate = attempt == 0 ? preferred
+                            : pickAlternate(preferred, targetAgents, blacklist);
+                    if (candidate == null) break;
+                    try {
+                        dispatchOne(node, candidate, status);
+                        ok = status.node(node.id()).state == JobStatus.State.SUCCEEDED;
+                        if (ok) {
+                            nodeToAgent.put(node.id(), candidate);
+                            agentTaskCounts.computeIfAbsent(candidate,
+                                    k -> new java.util.concurrent.atomic.AtomicLong()).incrementAndGet();
+                            recordSinkWrites(node, candidate);
+                        } else {
+                            blacklist.add(candidate);
+                            lastErr = new RuntimeException("agent " + candidate + " reported "
+                                    + status.node(node.id()).state);
+                            status.addEvent(new JobStatus.ProgressEvent(node.id(), "retry",
+                                    "attempt " + (attempt + 1) + " on " + candidate + " failed; retrying",
+                                    Instant.now()));
+                        }
+                    } catch (Exception ex) {
+                        blacklist.add(candidate);
+                        lastErr = ex;
+                        status.addEvent(new JobStatus.ProgressEvent(node.id(), "retry",
+                                "attempt " + (attempt + 1) + " on " + candidate + " threw " + ex.getMessage(),
+                                Instant.now()));
+                    }
+                }
+                if (!ok) {
+                    status.node(node.id()).state = JobStatus.State.FAILED;
+                    status.node(node.id()).error = lastErr == null
+                            ? "no matching agent could run node " + node.id()
+                            : "all retries exhausted; last error: " + lastErr.getMessage();
+                    throw new RuntimeException("node " + node.id() + " failed after retries");
+                }
             }
             status.state = status.cancelRequested.get()
                     ? JobStatus.State.CANCELLED
@@ -111,10 +165,64 @@ public final class PipelineScheduler implements AutoCloseable {
         return status;
     }
 
+    /**
+     * Locality-aware placement:
+     * <ol>
+     *   <li>If source is {@code ref} to an already-placed upstream node,
+     *       run on the same agent (no network hop for the row stream).</li>
+     *   <li>If source is a named persistent sink ({@code kvstore},
+     *       {@code lucene}), run on the agent that has that sink on-disk.</li>
+     *   <li>Fallback: pick the agent with the fewest tasks assigned so far
+     *       this session (least-loaded round-robin).</li>
+     * </ol>
+     */
+    private String pickAgent(NodeSpec node, List<String> targetAgents,
+                             java.util.Map<String, String> nodeToAgent) {
+        SourceSpec s = node.pipeline().source();
+        String local = null;
+        if (s instanceof SourceSpec.Ref r)      local = nodeToAgent.get(r.node());
+        else if (s instanceof SourceSpec.KvStore k) local = sinkLocations.locate("kvstore", k.name());
+        else if (s instanceof SourceSpec.Lucene l)  local = sinkLocations.locate("lucene",  l.name());
+        if (local != null && targetAgents.contains(local)) return local;
+        return leastLoaded(targetAgents);
+    }
+
+    /** Pick a not-yet-blacklisted alternative agent for a retry. */
+    private String pickAlternate(String previous, List<String> candidates, java.util.Set<String> blacklist) {
+        for (String a : candidates) {
+            if (!blacklist.contains(a) && !a.equals(previous)) return a;
+        }
+        // If everyone's blacklisted or only one candidate exists, allow the
+        // previous one on the assumption it might be transient — one more try.
+        for (String a : candidates) if (!blacklist.contains(a)) return a;
+        return null;
+    }
+
+    private String leastLoaded(List<String> agents) {
+        String best = agents.get(0);
+        long bestCount = Long.MAX_VALUE;
+        for (String a : agents) {
+            long c = agentTaskCounts.getOrDefault(a,
+                    new java.util.concurrent.atomic.AtomicLong()).get();
+            if (c < bestCount) { bestCount = c; best = a; }
+        }
+        return best;
+    }
+
+    /** Remember which agent now holds each persistent sink this node wrote. */
+    private void recordSinkWrites(NodeSpec node, String agentId) {
+        for (SinkSpec ss : node.pipeline().sinks()) {
+            if      (ss instanceof SinkSpec.KvStore k) sinkLocations.record("kvstore", k.name(), agentId);
+            else if (ss instanceof SinkSpec.Lucene  l) sinkLocations.record("lucene",  l.name(), agentId);
+            else if (ss instanceof SinkSpec.MemoryTable m) sinkLocations.record("memory", m.name(), agentId);
+        }
+    }
+
     private void dispatchOne(NodeSpec node, String agentId, JobStatus status) throws Exception {
         JobStatus.NodeStatus ns = status.node(node.id());
         ns.state = JobStatus.State.RUNNING;
         ns.startedAt = Instant.now();
+        ns.assignedAgent = agentId;   // for Mesh viz per-agent placement
 
         String taskId = "pt-" + TASK_SEQ.incrementAndGet();
         String resultSubject = "mesh.pipeline.result." + taskId;
