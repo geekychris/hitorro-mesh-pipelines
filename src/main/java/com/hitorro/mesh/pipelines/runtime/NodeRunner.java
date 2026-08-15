@@ -66,7 +66,8 @@ public final class NodeRunner {
 
             // Count source-side rows-in even when filters drop them.
             long[] rowsInHolder = { 0 };
-            Iterator<JsonNode> raw = wrap(sourceFactory.open(p.source()), rowsInHolder);
+            Iterator<JsonNode> rawSource = sourceFactory.open(p.source(), status.cancelRequested);
+            Iterator<JsonNode> raw = wrap(rawSource, rowsInHolder);
 
             List<Function<JsonNode, JsonNode>> compiledSteps = p.steps().stream()
                     .map(s -> StepFactory.compile(s, sinkRegistry)).toList();
@@ -93,9 +94,19 @@ public final class NodeRunner {
                     }
                 }
                 rowsOut++;
-                // Emit progress every 1000 rows for the SSE stream.
+                // Cheap volatile writes every row so pollers see live
+                // progress for streaming pipelines. Batch the heavier
+                // sink-count refresh + progress event every 64 rows.
+                ns.rowsOut = rowsOut;
+                ns.rowsIn  = rowsInHolder[0];
+                // Sink counts refresh every 8 rows — friendly to
+                // low-volume streaming pipelines whose UI otherwise
+                // shows sinks={} forever. High-throughput pipelines
+                // still amortise the map writes.
+                if ((rowsOut & 7) == 0) {
+                    for (Sink s : sinks) ns.sinkCounts.put(sinkName(s), s.count());
+                }
                 if ((rowsOut & 1023) == 0) {
-                    ns.rowsOut = rowsOut;
                     status.addEvent(new JobStatus.ProgressEvent(node.id(), "progress",
                             "rows: " + rowsOut, Instant.now()));
                 }
@@ -112,15 +123,21 @@ public final class NodeRunner {
                 status.addEvent(new JobStatus.ProgressEvent(node.id(), "done",
                         "done: " + rowsOut + " rows", Instant.now()));
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             ns.state = JobStatus.State.FAILED;
             ns.error = e.getClass().getSimpleName() + ": " + e.getMessage();
             status.addEvent(new JobStatus.ProgressEvent(node.id(), "error", ns.error, Instant.now()));
+            System.err.println("[NodeRunner] " + node.id() + " failed: " + ns.error);
+            e.printStackTrace(System.err);
         } finally {
             for (Sink s : sinks) {
                 try { s.close(); }
                 catch (Exception ignored) { /* logged in per-sink error above */ }
             }
+            // Close the raw source too if it holds a real resource
+            // (NATS connection, Kafka consumer, file handle).
+            // stream-close happens implicitly on the iterator chain;
+            // this belt-and-braces catches the streaming-source case.
             ns.finishedAt = Instant.now();
         }
     }

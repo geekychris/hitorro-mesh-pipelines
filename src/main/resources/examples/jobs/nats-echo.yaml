@@ -1,0 +1,31 @@
+# Streaming NATS pipeline — the "read a topic, transform, hand off to
+# another topic" pattern.
+#
+#   * `echo` node subscribes to NATS subject `demo.in`. Runs forever
+#     (state: RUNNING) until you DELETE the job. Every message is
+#     - enriched with a `processed_by` field
+#     - fanned out to NATS subject `demo.out` AND a counting sink
+#
+# The mesh smoke stack already runs a NATS server on localhost:4222,
+# so this works out-of-the-box against `mesh-up.sh`.
+#
+# Try it:
+#   POST /mesh/jobs/run/bundled/nats-echo         → returns jobId
+#   nats pub demo.in '{"greeting":"hello"}'       → in another shell
+#   GET  /mesh/jobs/{jobId}                       → rowsIn count climbs
+#   DELETE /mesh/jobs/{jobId}                     → job goes CANCELLED
+#
+# The same shape reads/writes Kafka once you flip the kind to `kafka`
+# and provide bootstrap + topic + groupId.
+job: nats-echo
+version: "1"
+nodes:
+  - id: echo
+    pipeline:
+      source: {kind: nats, subject: "demo.in", servers: "nats://localhost:4222"}
+      steps:
+        - {kind: set-field, name: processed_by, value: "hitorro-pipelines"}
+      sinks:
+        - {kind: nats, subject: "demo.out", servers: "nats://localhost:4222"}
+        - {kind: counting, label: echo}
+        - {kind: memory-table, name: echo-buffer}

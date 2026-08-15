@@ -38,7 +38,15 @@ public final class JobRunner implements AutoCloseable {
 
     public JobStatus run(JobSpec spec) {
         String jobId = "job-" + RUN_ID.incrementAndGet();
-        JobStatus status = new JobStatus(jobId, spec.id());
+        return run(spec, new JobStatus(jobId, spec.id()));
+    }
+
+    /**
+     * Overload that mutates the caller's {@code JobStatus} in place. Used
+     * by the REST controller so pollers see live progress for streaming
+     * jobs whose {@code run} never returns to trigger a copyback.
+     */
+    public JobStatus run(JobSpec spec, JobStatus status) {
         status.state = JobStatus.State.RUNNING;
         try {
             List<List<NodeSpec>> ranks = topoRank(spec.nodes());
@@ -63,9 +71,13 @@ public final class JobRunner implements AutoCloseable {
             status.state = status.cancelRequested.get()
                     ? JobStatus.State.CANCELLED
                     : JobStatus.State.SUCCEEDED;
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            // Widened to catch NoClassDefFoundError etc. from streaming
+            // adapters whose optional deps aren't on the classpath.
             status.state = JobStatus.State.FAILED;
-            status.error = e.getMessage();
+            status.error = e.getClass().getSimpleName() + ": " + e.getMessage();
+            System.err.println("[JobRunner] job " + status.jobId + " failed: " + status.error);
+            e.printStackTrace(System.err);
         } finally {
             status.finishedAt = Instant.now();
         }

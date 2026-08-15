@@ -18,12 +18,17 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.GZIPInputStream;
 
 /**
  * Opens a {@link SourceSpec} into an {@code Iterator<JsonNode>}. Callers
  * are expected to drain and close the iterator (via try-with-resources
  * when it implements {@link AutoCloseable}).
+ *
+ * <p>The {@code cancelled} flag is passed to streaming sources (NATS,
+ * Kafka) so they can break out of blocking polls cleanly when
+ * {@code DELETE /mesh/jobs/{id}} fires.</p>
  */
 public final class SourceFactory {
 
@@ -36,12 +41,18 @@ public final class SourceFactory {
     }
 
     public Iterator<JsonNode> open(SourceSpec spec) throws IOException {
+        return open(spec, new AtomicBoolean());
+    }
+
+    public Iterator<JsonNode> open(SourceSpec spec, AtomicBoolean cancelled) throws IOException {
         return switch (spec) {
             case SourceSpec.NdjsonFile s -> openNdjson(s.url());
             case SourceSpec.JsonFile   s -> openJsonArray(s.url());
             case SourceSpec.CsvFile    s -> openCsv(s.url());
             case SourceSpec.Inline     s -> openInline(s.rows());
             case SourceSpec.Ref        s -> openRef(s.node());
+            case SourceSpec.Nats       s -> openNats(s.servers(), s.subject(), cancelled);
+            case SourceSpec.Kafka      s -> openKafka(s.bootstrap(), s.topic(), s.groupId(), cancelled);
             case SourceSpec.KvStore    s -> throw new UnsupportedOperationException(
                     "kvstore source is Phase 2 (needs the kvstore adapter)");
             case SourceSpec.Lucene     s -> throw new UnsupportedOperationException(
@@ -49,6 +60,30 @@ public final class SourceFactory {
             case SourceSpec.Sql        s -> throw new UnsupportedOperationException(
                     "sql source is Phase 2 (needs the jvssql adapter)");
         };
+    }
+
+    // ------------------------------------------------------------ NATS (streaming)
+    private Iterator<JsonNode> openNats(String servers, String subject, AtomicBoolean cancelled) throws IOException {
+        try {
+            return new NatsSource(servers, subject, cancelled);
+        } catch (NoClassDefFoundError e) {
+            throw new IOException("nats source needs io.nats:jnats on the classpath — add the optional dep", e);
+        } catch (Exception e) {
+            throw new IOException("failed to connect to NATS: " + e.getMessage(), e);
+        }
+    }
+
+    // ------------------------------------------------------------ Kafka (streaming)
+    private Iterator<JsonNode> openKafka(String bootstrap, String topic, String groupId,
+                                          AtomicBoolean cancelled) throws IOException {
+        if (groupId == null || groupId.isBlank()) {
+            throw new IOException("kafka source requires groupId");
+        }
+        try {
+            return new KafkaSourceImpl(bootstrap, topic, groupId, cancelled);
+        } catch (NoClassDefFoundError e) {
+            throw new IOException("kafka source needs org.apache.kafka:kafka-clients on the classpath", e);
+        }
     }
 
     // ------------------------------------------------------------ NDJSON

@@ -23,6 +23,8 @@ import java.util.List;
     @JsonSubTypes.Type(value = SourceSpec.KvStore.class,    name = "kvstore"),
     @JsonSubTypes.Type(value = SourceSpec.Lucene.class,     name = "lucene"),
     @JsonSubTypes.Type(value = SourceSpec.Sql.class,        name = "sql"),
+    @JsonSubTypes.Type(value = SourceSpec.Nats.class,       name = "nats"),
+    @JsonSubTypes.Type(value = SourceSpec.Kafka.class,      name = "kafka"),
 })
 public sealed interface SourceSpec {
 
@@ -58,4 +60,23 @@ public sealed interface SourceSpec {
      * through the shipped SQL client; Phase 2 dispatches to mesh agents.
      */
     record Sql(String sql) implements SourceSpec { }
+
+    /**
+     * NATS subject subscription. Emits one row per received message; the
+     * message payload must be valid JSON. Runs forever unless cancelled
+     * — the containing job stays in state {@code RUNNING} until
+     * {@code DELETE /mesh/jobs/{id}}.
+     *
+     * <p>{@code servers} defaults to {@code nats://localhost:4222} when
+     * unset. Consumer is push-mode (core NATS, not JetStream).</p>
+     */
+    record Nats(String subject, String servers) implements SourceSpec { }
+
+    /**
+     * Kafka topic consumer. Emits one row per record. Streaming — same
+     * lifecycle as the NATS source. {@code groupId} is required; ordering
+     * within a partition preserved; parallelism across partitions is a
+     * follow-up when nodes learn to partition.
+     */
+    record Kafka(String bootstrap, String topic, String groupId) implements SourceSpec { }
 }

@@ -18,6 +18,8 @@ public final class BundledJobs {
     public static final String[] EXAMPLES = {
             "countries-triple-sink",
             "airports-typed-enrich",
+            "nats-echo",
+            "nats-publisher",
     };
 
     private BundledJobs() { }

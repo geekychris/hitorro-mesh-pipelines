@@ -1,0 +1,19 @@
+# Companion to nats-echo — publishes a fixed set of messages to
+# `demo.in` and exits. Kick off nats-echo first (it starts subscribing),
+# then run this to feed it. Demonstrates the "job → NATS → job" pattern
+# where two independent pipelines compose via a message bus.
+job: nats-publisher
+version: "1"
+nodes:
+  - id: publish
+    pipeline:
+      source: {kind: inline, rows: [
+        {msg: "hello 1", n: 1},
+        {msg: "hello 2", n: 2},
+        {msg: "hello 3", n: 3},
+        {msg: "hello 4", n: 4},
+        {msg: "hello 5", n: 5}
+      ]}
+      sinks:
+        - {kind: nats, subject: "demo.in", servers: "nats://localhost:4222"}
+        - {kind: counting, label: published}

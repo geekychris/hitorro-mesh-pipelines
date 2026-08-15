@@ -50,11 +50,20 @@ public sealed interface SinkSpec {
      */
     record Lucene(String name, boolean storeSource) implements SinkSpec { }
 
-    /** NATS subject — Phase 3 (streaming edge). */
-    record Nats(String subject) implements SinkSpec { }
+    /**
+     * NATS core-publish sink. Serialises each row as JSON, publishes to
+     * {@code subject}. Servers defaults to {@code nats://localhost:4222}.
+     * Fire-and-forget — the JetStream ack path lands with the streaming
+     * adapter module.
+     */
+    record Nats(String subject, String servers) implements SinkSpec { }
 
-    /** Kafka topic — Phase 3 (streaming edge). */
-    record Kafka(String topic) implements SinkSpec { }
+    /**
+     * Kafka producer sink. Serialises each row as JSON. Optional
+     * {@code keyExpr} (dotted path into the row) sets the partition key;
+     * without it, partition assignment is round-robin.
+     */
+    record Kafka(String bootstrap, String topic, String keyExpr) implements SinkSpec { }
 
     /** Counting sink — increments a labelled counter surfaced in job status. */
     record Counting(String label) implements SinkSpec { }

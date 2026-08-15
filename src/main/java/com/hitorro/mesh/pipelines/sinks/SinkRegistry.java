@@ -57,14 +57,35 @@ public final class SinkRegistry {
             case SinkSpec.Lucene     s -> new LuceneSink(s.name(), s.storeSource(), home);
             case SinkSpec.Counting   s -> new CountingSink(s.label());
             case SinkSpec.MemoryTable s -> new MemoryTableSink(s.name(), memoryTable(s.name()));
+            case SinkSpec.Nats       s -> createNats(s);
+            case SinkSpec.Kafka      s -> createKafka(s);
             case SinkSpec.CsvFile    s -> throw new UnsupportedOperationException(
                     "csv-file sink is Phase 2 (add jackson-csv or the basefile adapter)");
             case SinkSpec.JsonFile   s -> throw new UnsupportedOperationException(
                     "json-file sink is Phase 2");
-            case SinkSpec.Nats       s -> throw new UnsupportedOperationException(
-                    "nats sink is Phase 3 (streaming edges)");
-            case SinkSpec.Kafka      s -> throw new UnsupportedOperationException(
-                    "kafka sink is Phase 3 (streaming edges)");
         };
+    }
+
+    /**
+     * NATS sink — optional dependency. Fails with a clear message if the
+     * jnats jar isn't on the classpath.
+     */
+    private Sink createNats(SinkSpec.Nats spec) {
+        try {
+            return new NatsSink(spec.servers(), spec.subject());
+        } catch (NoClassDefFoundError e) {
+            throw new UnsupportedOperationException(
+                    "nats sink needs io.nats:jnats on the classpath — add the optional dep", e);
+        }
+    }
+
+    /** Kafka sink — optional dependency. */
+    private Sink createKafka(SinkSpec.Kafka spec) {
+        try {
+            return new KafkaSinkImpl(spec.bootstrap(), spec.topic(), spec.keyExpr());
+        } catch (NoClassDefFoundError e) {
+            throw new UnsupportedOperationException(
+                    "kafka sink needs org.apache.kafka:kafka-clients on the classpath", e);
+        }
     }
 }

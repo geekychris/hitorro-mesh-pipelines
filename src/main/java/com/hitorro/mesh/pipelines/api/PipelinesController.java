@@ -98,37 +98,13 @@ public class PipelinesController {
     }
 
     private ResponseEntity<Map<String, String>> acceptAndRun(JobSpec spec) {
-        // Pre-register a status skeleton so the caller can start polling
-        // immediately after receiving the jobId.
-        String provisionalId = "job-" + System.nanoTime();
-        JobStatus provisional = new JobStatus(provisionalId, spec.id());
-        registry.register(provisional);
-        // Actual run happens on the runner's own thread pool and stamps a
-        // real jobId. We return the pre-registered one; the runner updates
-        // the same status object we hand it via a wrapper below.
-        pool.submit(() -> {
-            JobStatus real = runner.run(spec);
-            // Copy real state onto the provisional one so pollers see it.
-            copyStatus(real, provisional);
-        });
-        return ResponseEntity.accepted().body(Map.of("jobId", provisionalId));
-    }
-
-    private static void copyStatus(JobStatus src, JobStatus dst) {
-        for (var e : src.nodes().entrySet()) {
-            var ns = dst.node(e.getKey());
-            var s = e.getValue();
-            ns.state = s.state;
-            ns.rowsIn = s.rowsIn;
-            ns.rowsOut = s.rowsOut;
-            ns.startedAt = s.startedAt;
-            ns.finishedAt = s.finishedAt;
-            ns.error = s.error;
-            ns.sinkCounts.putAll(s.sinkCounts);
-        }
-        for (var ev : src.events()) dst.addEvent(ev);
-        dst.state = src.state;
-        dst.error = src.error;
-        dst.finishedAt = src.finishedAt;
+        // Live status object — the runner mutates this directly so pollers
+        // see progress in real time. Critical for streaming jobs whose
+        // run() never returns.
+        String jobId = "job-" + System.nanoTime();
+        JobStatus live = new JobStatus(jobId, spec.id());
+        registry.register(live);
+        pool.submit(() -> runner.run(spec, live));
+        return ResponseEntity.accepted().body(Map.of("jobId", jobId));
     }
 }
