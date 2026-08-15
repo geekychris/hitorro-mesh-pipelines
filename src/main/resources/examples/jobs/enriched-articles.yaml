@@ -1,0 +1,76 @@
+# Enriched articles — demonstrates the KV round-trip that the fleet-retrieval
+# `fetch` stage relies on.
+#
+# Pipeline: inline articles → groovy-map that mimics NLP enrichment
+# (sentence segmentation, word counts, naive key-term extraction, JVS type
+# stamping) → written to BOTH a Lucene index (for querying) AND a RocksDB
+# KV store keyed by id (for fetching the rich enriched JSON later).
+#
+# The enrichment does not require the OpenNLP or ONNX models — it fakes
+# the shape a real NLP enricher would produce so the retrieval round-trip
+# is demonstrable end-to-end without needing HT_HOME wired up. Swap the
+# groovy-map for a jvs-groovy step with EnrichOperations when the real
+# NLP pipeline is desired.
+#
+# After running:
+#   1. Fleet tab → make sure fleet-retrieval is UP.
+#   2. Search tab → Backend = fleet-retrieval → pick `articles` from the
+#      Indexes list.
+#   3. Tick the `fetch` stage in the query builder → 🔍 Run.
+#      Documents come back with the full enriched JSON (sentences,
+#      key_terms, POS-flavored counters) pulled from the KV store.
+job: enriched-articles
+version: "1"
+nodes:
+  - id: articles
+    pipeline:
+      source: {kind: inline, rows: [
+        {id: "a1", title: "London Heathrow expansion", country: GB,
+         body: "London Heathrow Airport announced a third runway plan. The government approved the environmental impact review. Construction is expected to begin in 2028. Airlines welcomed the decision. Residents in nearby villages raised noise concerns."},
+        {id: "a2", title: "Tokyo Narita bullet-train link", country: JP,
+         body: "A new Shinkansen extension will connect Tokyo Narita to central Tokyo in under thirty minutes. Trials are underway on the eastern segment. The Japan Railways operator confirmed the timeline. Local commuters expect major benefits during peak hours."},
+        {id: "a3", title: "Singapore Changi biometric lanes", country: SG,
+         body: "Singapore Changi Airport rolled out biometric-only immigration lanes at Terminal 4. Passengers no longer need to present a passport at any checkpoint. The system uses face and iris recognition. Privacy advocates asked for a public audit."},
+        {id: "a4", title: "Dubai Metro extension", country: AE,
+         body: "The Dubai Metro Red Line was extended to Expo City. Trains now run every four minutes during rush hour. The extension cost 2.5 billion dirhams. Passenger volume beat forecasts in the first month."},
+        {id: "a5", title: "São Paulo airport rail", country: BR,
+         body: "São Paulo Guarulhos International will get a direct rail link to the city center. The project has federal and state funding. Construction begins next quarter. Airport officials estimate a fifty-percent reduction in road congestion."}
+      ]}
+      steps:
+        # ── "enrichment" step: computes fields a real NLP pipeline
+        # would populate (sentence segmentation, term extraction, POS
+        # counters). Faked with regex/string ops so the demo runs
+        # without OpenNLP / ONNX models on the classpath. ──
+        - kind: groovy-map
+          script: |
+            def body = (row.body ?: '').toString()
+            def sentences = body.split(/(?<=[.!?])\s+/).findAll { it }
+            def words     = body.split(/\s+/).findAll { it }
+            def capWords  = words.findAll { it =~ /^[A-Z][a-zA-Z]{2,}/ }
+
+            row.type            = 'demo_article'
+            row.sentence_count  = sentences.size()
+            row.word_count      = words.size()
+            row.char_length     = body.length()
+            row.sentences       = sentences.collect { s ->
+              [text: s.trim(), word_count: s.split(/\s+/).findAll{it}.size()]
+            }
+            row.key_terms       = capWords.unique().take(8)
+            row.avg_sentence_len = sentences ? Math.round((double)words.size() / sentences.size()) : 0
+            row.pos_counters    = [
+              nouns_est:  capWords.size(),
+              verbs_est:  words.count { it ==~ /(?i)(is|are|was|were|will|has|have|had|announced|approved|rolled|extended|begins|connect|cost|welcomed|raised|expect|got)/ },
+              numbers:    words.count { it ==~ /^\d.*/ }
+            ]
+            row.enriched_at     = gen.now()
+            row.event_id        = gen.uuid()
+            return row
+      sinks:
+        # Lucene index: exposes the enriched fields for full-text query.
+        # storeSource: true tucks the full JSON into the index so the
+        # retrieval pipeline can hand it back even without the fetch stage.
+        - {kind: lucene,   name: articles, storeSource: true}
+        # KV store: keyed by id — this is what the retrieval `fetch`
+        # stage pulls to enrich hits with the full rich enriched JSON.
+        - {kind: kvstore,  name: articles, keyExpr: "id"}
+        - {kind: counting, label: enriched}
