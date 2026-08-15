@@ -71,10 +71,17 @@ nodes:
         # so every field lands in the RIGHT Lucene field type per the
         # type's groups[].method: id/country/key_terms → StringField,
         # title/body → analyzed TextField, word_count/sentence_count →
-        # LongPoint (range-queryable). storeSource keeps the full row.
+        # LongPoint (range-queryable).
+        #
+        # storeSource: false is deliberate — the index holds ONLY the
+        # projected typed fields (great for search, faceting, ranges),
+        # nested structures like sentences[] and pos_counters{} are
+        # NOT in the index. Users who want the full rich enriched
+        # document add the `fetch` stage which pulls it from the KV
+        # store below. Makes the round-trip visible in the UI.
         - {kind: jvs-lucene, name: articles,
            typeJsonResource: "classpath:/types/demo_enriched_article.json",
-           storeSource: true}
+           storeSource: false}
         # KV store: keyed by id — this is what the retrieval `fetch`
         # stage pulls to enrich hits with the full rich enriched JSON.
         - {kind: kvstore,  name: articles, keyExpr: "id"}
