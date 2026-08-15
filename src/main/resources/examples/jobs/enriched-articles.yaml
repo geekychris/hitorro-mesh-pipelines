@@ -66,10 +66,15 @@ nodes:
             row.event_id        = gen.uuid()
             return row
       sinks:
-        # Lucene index: exposes the enriched fields for full-text query.
-        # storeSource: true tucks the full JSON into the index so the
-        # retrieval pipeline can hand it back even without the fetch stage.
-        - {kind: lucene,   name: articles, storeSource: true}
+        # Type-aware Lucene index. jvs-lucene wraps each row as a
+        # JVS(type=demo_enriched_article) then uses JVSLuceneIndexWriter
+        # so every field lands in the RIGHT Lucene field type per the
+        # type's groups[].method: id/country/key_terms → StringField,
+        # title/body → analyzed TextField, word_count/sentence_count →
+        # LongPoint (range-queryable). storeSource keeps the full row.
+        - {kind: jvs-lucene, name: articles,
+           typeJsonResource: "classpath:/types/demo_enriched_article.json",
+           storeSource: true}
         # KV store: keyed by id — this is what the retrieval `fetch`
         # stage pulls to enrich hits with the full rich enriched JSON.
         - {kind: kvstore,  name: articles, keyExpr: "id"}

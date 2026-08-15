@@ -19,6 +19,7 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
     @JsonSubTypes.Type(value = SinkSpec.JsonFile.class,   name = "json-file"),
     @JsonSubTypes.Type(value = SinkSpec.KvStore.class,    name = "kvstore"),
     @JsonSubTypes.Type(value = SinkSpec.Lucene.class,     name = "lucene"),
+    @JsonSubTypes.Type(value = SinkSpec.JvsLucene.class,  name = "jvs-lucene"),
     @JsonSubTypes.Type(value = SinkSpec.Nats.class,       name = "nats"),
     @JsonSubTypes.Type(value = SinkSpec.Kafka.class,      name = "kafka"),
     @JsonSubTypes.Type(value = SinkSpec.Counting.class,   name = "counting"),
@@ -53,6 +54,22 @@ public sealed interface SinkSpec {
      * {@code hitorro-mesh-pipelines-lucene}.
      */
     record Lucene(String name, boolean storeSource) implements SinkSpec { }
+
+    /**
+     * Type-aware Lucene index driven by the JVS type system. Each row is
+     * wrapped as a JVS with the loaded {@code Type}, then handed to
+     * {@code JVSLuceneIndexWriter} — every field is projected per the
+     * type's {@code groups[].method} (identifier → StringField,
+     * text → TextField w/ lang analyzer, mls → per-language TextField,
+     * long → LongPoint + NumericDocValuesField, etc.).
+     *
+     * <p>{@code typeJsonResource} is a Spring resource URL — {@code file:...},
+     * {@code classpath:...}, or {@code http(s)://...} — pointing at the
+     * type JSON. The adapter lives in
+     * {@code hitorro-mesh-pipelines-jvstype}; drop that jar on the
+     * classpath to enable this sink kind.</p>
+     */
+    record JvsLucene(String name, String typeJsonResource, boolean storeSource) implements SinkSpec { }
 
     /**
      * NATS core-publish sink. Serialises each row as JSON, publishes to

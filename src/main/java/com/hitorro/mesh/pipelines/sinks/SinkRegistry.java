@@ -75,6 +75,8 @@ public final class SinkRegistry {
             case SinkSpec.NdjsonFile s -> new NdjsonFileSink(s.url());
             case SinkSpec.KvStore    s -> new KvStoreSink(s.name(), s.keyExpr(), home);
             case SinkSpec.Lucene     s -> new LuceneSink(s.name(), s.storeSource(), home);
+            case SinkSpec.JvsLucene  s -> throw new UnsupportedOperationException(
+                    "jvs-lucene sink needs hitorro-mesh-pipelines-jvstype on the classpath");
             case SinkSpec.Counting   s -> new CountingSink(s.label());
             case SinkSpec.MemoryTable s -> new MemoryTableSink(s.name(), memoryTable(s.name()));
             case SinkSpec.Nats       s -> createNats(s);
