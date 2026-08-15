@@ -185,16 +185,67 @@ public final class StepFactory {
             ObjectNode src = (ObjectNode) row;
             ObjectNode out = passthrough ? src.deepCopy() : JSON.createObjectNode();
             for (var f : fields) {
-                JsonNode v = src.get(f.name());
-                JsonNode coerced = coerce(v, f.type());
+                JsonNode v = pluckPath(src, f.name());
+                JsonNode coerced = coerceField(v, f.type());
                 if (coerced == null && v != null && !v.isNull()) {
-                    // Coercion failed with a non-null input — drop row.
-                    return null;
+                    return null;   // coercion failed on non-null input
                 }
-                out.set(f.name(), coerced == null ? JSON.nullNode() : coerced);
+                setPath(out, f.name(), coerced == null ? JSON.nullNode() : coerced);
             }
             return out;
         };
+    }
+
+    /** Coerce with array-form support: {@code array<core_string>} → coerce every element. */
+    private static JsonNode coerceField(JsonNode v, String type) {
+        if (type != null && type.startsWith("array<") && type.endsWith(">")) {
+            if (v == null || v.isNull()) return null;
+            String innerType = type.substring("array<".length(), type.length() - 1);
+            com.fasterxml.jackson.databind.node.ArrayNode arr = JSON.createArrayNode();
+            // Accept either a real array OR a comma-separated string.
+            if (v.isArray()) {
+                for (JsonNode e : v) {
+                    JsonNode c = coerce(e, innerType);
+                    arr.add(c == null ? JSON.nullNode() : c);
+                }
+            } else if (v.isTextual()) {
+                for (String piece : v.asText().split(",")) {
+                    JsonNode c = coerce(JSON.getNodeFactory().textNode(piece.trim()), innerType);
+                    arr.add(c == null ? JSON.nullNode() : c);
+                }
+            } else {
+                return null;
+            }
+            return arr;
+        }
+        return coerce(v, type);
+    }
+
+    /** Walk a dotted path into an ObjectNode without allocating. */
+    private static JsonNode pluckPath(JsonNode row, String path) {
+        JsonNode cur = row;
+        for (String seg : path.split("\\.")) {
+            if (cur == null || cur.isNull()) return null;
+            cur = cur.get(seg);
+        }
+        return cur;
+    }
+
+    /** Set a value at a dotted path, creating intermediate object nodes. */
+    private static void setPath(ObjectNode root, String path, JsonNode value) {
+        String[] segs = path.split("\\.");
+        ObjectNode cur = root;
+        for (int i = 0; i < segs.length - 1; i++) {
+            JsonNode next = cur.get(segs[i]);
+            if (next == null || !next.isObject()) {
+                ObjectNode child = JSON.createObjectNode();
+                cur.set(segs[i], child);
+                cur = child;
+            } else {
+                cur = (ObjectNode) next;
+            }
+        }
+        cur.set(segs[segs.length - 1], value);
     }
 
     private static JsonNode coerce(JsonNode v, String type) {

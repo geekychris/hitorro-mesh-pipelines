@@ -8,8 +8,10 @@ import com.hitorro.mesh.pipelines.model.SinkSpec;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.ServiceLoader;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -28,8 +30,22 @@ public final class SinkRegistry {
     private final Path home;
     private final Map<String, List<JsonNode>> memoryTables = new ConcurrentHashMap<>();
 
+    /**
+     * Adapters loaded via ServiceLoader — sub-modules like
+     * {@code hitorro-mesh-pipelines-kvstore} contribute real
+     * RocksDB / Lucene / etc. sinks. Consulted before the built-in
+     * stub switch so real impls override the fallbacks when present.
+     */
+    private final List<SinkAdapter> adapters = new ArrayList<>();
+
     public SinkRegistry(Path home) {
         this.home = home;
+        for (SinkAdapter a : ServiceLoader.load(SinkAdapter.class)) adapters.add(a);
+    }
+
+    /** Register a sink adapter programmatically (mainly for tests). */
+    public void register(SinkAdapter adapter) {
+        adapters.add(adapter);
     }
 
     public static SinkRegistry withDefaultHome() {
@@ -51,6 +67,10 @@ public final class SinkRegistry {
 
     /** Build a fresh sink instance for one run. Caller {@link Sink#close}s. */
     public Sink create(SinkSpec spec) {
+        // Adapter-first — sub-modules override built-in stubs.
+        for (SinkAdapter a : adapters) {
+            if (a.handles(spec)) return a.create(spec, home);
+        }
         return switch (spec) {
             case SinkSpec.NdjsonFile s -> new NdjsonFileSink(s.url());
             case SinkSpec.KvStore    s -> new KvStoreSink(s.name(), s.keyExpr(), home);

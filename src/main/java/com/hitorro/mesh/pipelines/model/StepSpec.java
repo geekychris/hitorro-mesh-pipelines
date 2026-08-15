@@ -57,7 +57,25 @@ public sealed interface StepSpec {
      */
     record ToTyped(java.util.List<Field> fields, boolean passthrough)
             implements StepSpec {
-        public record Field(String name, String type) { }
+        /**
+         * One field in the JVS-lite schema. {@code name} may be a dotted
+         * path ({@code "user.email"}); the row is walked into that path
+         * for reading and coerced into place for writing.
+         *
+         * <p>{@code type} accepts a JVS-primitive name
+         * ({@code core_string} / {@code core_long} / {@code core_double}
+         * / {@code core_boolean} / {@code core_timestamp}) OR an array
+         * form {@code array<core_string>} etc. Unknown types are a
+         * passthrough (no coercion, no error).</p>
+         *
+         * <p>{@code role} is metadata — carried on the field so downstream
+         * sinks that care (Lucene: index differently for id.* roles;
+         * KV store: use as the default key when {@code keyExpr} is unset)
+         * can react. Not enforced by the coercion pass.</p>
+         */
+        public record Field(String name, String type, String role) {
+            public Field(String name, String type) { this(name, type, null); }
+        }
     }
 
     /**

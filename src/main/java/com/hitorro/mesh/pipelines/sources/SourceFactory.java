@@ -35,9 +35,16 @@ public final class SourceFactory {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final SinkRegistry sinkRegistry;
+    private final List<SourceAdapter> adapters = new ArrayList<>();
 
     public SourceFactory(SinkRegistry sinkRegistry) {
         this.sinkRegistry = sinkRegistry;
+        for (SourceAdapter a : java.util.ServiceLoader.load(SourceAdapter.class)) adapters.add(a);
+    }
+
+    /** Register a source adapter programmatically (mainly for tests). */
+    public void register(SourceAdapter adapter) {
+        adapters.add(adapter);
     }
 
     public Iterator<JsonNode> open(SourceSpec spec) throws IOException {
@@ -45,6 +52,16 @@ public final class SourceFactory {
     }
 
     public Iterator<JsonNode> open(SourceSpec spec, AtomicBoolean cancelled) throws IOException {
+        for (SourceAdapter a : adapters) {
+            if (a.handles(spec)) {
+                try {
+                    return a.open(spec, sinkRegistry.home(), cancelled);
+                } catch (Exception e) {
+                    throw new IOException("source adapter " + a.getClass().getSimpleName()
+                            + " failed: " + e.getMessage(), e);
+                }
+            }
+        }
         return switch (spec) {
             case SourceSpec.NdjsonFile s -> openNdjson(s.url());
             case SourceSpec.JsonFile   s -> openJsonArray(s.url());
