@@ -26,6 +26,7 @@ public final class BundledJobs {
             "distributed-fanout",
             "distributed-reduce-pattern",
             "distributed-reduce-shuffle",
+            "enrich-and-index",
     };
 
     private BundledJobs() { }

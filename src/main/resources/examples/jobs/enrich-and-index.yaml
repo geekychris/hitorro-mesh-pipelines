@@ -1,0 +1,44 @@
+# Enrich-and-index pipeline — the end-to-end search story.
+#
+#   ingest → groovy-map (enrichment) → lucene (indexed for search)
+#
+# After running, hit  GET /mesh/search/airports?q=heathrow  (or use
+# the Search tab in the UI) to retrieve matching enriched documents.
+# Every field the enrichment step wrote is indexed AND stored as
+# _source, so search returns the full enriched JSON.
+#
+# Pattern generalises to any real dataset: pipeline reads → transforms
+# → indexes into a named Lucene index → REST/UI queries surface the
+# enriched output as a first-class search runtime.
+job: enrich-and-index
+version: "1"
+nodes:
+  - id: airports
+    pipeline:
+      source: {kind: inline, rows: [
+        {iata: JFK, name: "John F. Kennedy International", country: US, city: "New York",    elevation_ft: 13},
+        {iata: LAX, name: "Los Angeles International",     country: US, city: "Los Angeles", elevation_ft: 125},
+        {iata: LHR, name: "London Heathrow",               country: GB, city: "London",      elevation_ft: 83},
+        {iata: CDG, name: "Paris Charles de Gaulle",       country: FR, city: "Paris",       elevation_ft: 392},
+        {iata: FRA, name: "Frankfurt am Main",             country: DE, city: "Frankfurt",   elevation_ft: 364},
+        {iata: NRT, name: "Tokyo Narita International",    country: JP, city: "Tokyo",       elevation_ft: 141},
+        {iata: SIN, name: "Singapore Changi",              country: SG, city: "Singapore",   elevation_ft: 22},
+        {iata: SYD, name: "Sydney Kingsford Smith",        country: AU, city: "Sydney",      elevation_ft: 21},
+        {iata: GRU, name: "São Paulo Guarulhos",           country: BR, city: "São Paulo",   elevation_ft: 2459},
+        {iata: DXB, name: "Dubai International",           country: AE, city: "Dubai",       elevation_ft: 62},
+        {iata: JNB, name: "O.R. Tambo International",      country: ZA, city: "Johannesburg",elevation_ft: 5558},
+        {iata: MEX, name: "Mexico City International",     country: MX, city: "Mexico City", elevation_ft: 7316}
+      ]}
+      steps:
+        - kind: groovy-map
+          script: |
+            row.altitude_bucket = row.elevation_ft < 100  ? 'coastal'
+                               : row.elevation_ft < 1000 ? 'lowland'
+                               : row.elevation_ft < 3000 ? 'highland'
+                               :                           'alpine'
+            row.event_id = gen.uuid()
+            row.indexed_at = gen.now()
+            return row
+      sinks:
+        - {kind: lucene, name: airports, storeSource: true}
+        - {kind: counting, label: indexed}
