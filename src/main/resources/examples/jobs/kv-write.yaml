@@ -1,0 +1,30 @@
+# First half of the "job chains via KV store" demo. Writes 15 city
+# rows into a RocksDB KV store called `world-cities` keyed on iata.
+# Run kv-read next — it reads them back and adds enrichment.
+#
+# Physical DB at ${hitorro.pipelines.home}/kv/world-cities.
+job: kv-write
+version: "1"
+nodes:
+  - id: seed
+    pipeline:
+      source: {kind: inline, rows: [
+        {iata: JFK, name: "John F Kennedy",    city: "New York",    country: US, pop_m: 8.4},
+        {iata: LAX, name: "Los Angeles Intl",  city: "Los Angeles", country: US, pop_m: 3.9},
+        {iata: LHR, name: "London Heathrow",   city: "London",      country: GB, pop_m: 9.0},
+        {iata: CDG, name: "Charles de Gaulle", city: "Paris",       country: FR, pop_m: 2.1},
+        {iata: FRA, name: "Frankfurt",         city: "Frankfurt",   country: DE, pop_m: 0.75},
+        {iata: NRT, name: "Tokyo Narita",      city: "Tokyo",       country: JP, pop_m: 13.5},
+        {iata: SIN, name: "Singapore Changi",  city: "Singapore",   country: SG, pop_m: 5.7},
+        {iata: SYD, name: "Sydney",            city: "Sydney",      country: AU, pop_m: 5.3},
+        {iata: GRU, name: "São Paulo",         city: "São Paulo",   country: BR, pop_m: 12.3},
+        {iata: DXB, name: "Dubai International",city: "Dubai",      country: AE, pop_m: 3.4},
+        {iata: JNB, name: "Johannesburg OR Tambo",city: "Johannesburg",country: ZA, pop_m: 5.6},
+        {iata: YYZ, name: "Toronto Pearson",   city: "Toronto",     country: CA, pop_m: 2.9},
+        {iata: MEX, name: "Mexico City",       city: "Mexico City", country: MX, pop_m: 9.2},
+        {iata: BOM, name: "Mumbai",            city: "Mumbai",      country: IN, pop_m: 20.4},
+        {iata: PEK, name: "Beijing Capital",   city: "Beijing",     country: CN, pop_m: 21.5}
+      ]}
+      sinks:
+        - {kind: kvstore, name: world-cities, keyExpr: "iata"}
+        - {kind: counting, label: written}

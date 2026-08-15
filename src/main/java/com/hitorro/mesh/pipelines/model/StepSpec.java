@@ -21,6 +21,7 @@ import java.util.List;
     @JsonSubTypes.Type(value = StepSpec.ToTyped.class,    name = "to-typed"),
     @JsonSubTypes.Type(value = StepSpec.Lookup.class,     name = "lookup"),
     @JsonSubTypes.Type(value = StepSpec.GroovyMap.class,  name = "groovy-map"),
+    @JsonSubTypes.Type(value = StepSpec.JvsGroovy.class,  name = "jvs-groovy"),
     @JsonSubTypes.Type(value = StepSpec.Jvssql.class,     name = "jvssql"),
 })
 public sealed interface StepSpec {
@@ -100,6 +101,20 @@ public sealed interface StepSpec {
      * inline; {@code script-file} loading is Phase 2.
      */
     record GroovyMap(String script) implements StepSpec { }
+
+    /**
+     * Real JVS type-system transform. Runs each row through the shipped
+     * {@code hitorro-jsontypesystem} {@code GroovyTransformMapper} DSL —
+     * source / target / work registers, {@code copyAll} / {@code copy} /
+     * {@code set} / {@code mls} / {@code append} / {@code times} /
+     * {@code loop} / {@code when}, plus the {@code gen} data-generator
+     * library.
+     *
+     * <p>Requires the {@code hitorro-mesh-pipelines-jvstype} adapter on
+     * the classpath. Without it users get a clear error at step-compile
+     * time (via the StepAdapter SPI miss).</p>
+     */
+    record JvsGroovy(String script, String typeJson) implements StepSpec { }
 
     /** Run a SQL query treating the incoming rows as an in-memory table. */
     record Jvssql(String sql) implements StepSpec { }

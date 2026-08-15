@@ -39,6 +39,11 @@ public final class StepFactory {
 
     public static Function<JsonNode, JsonNode> compile(StepSpec spec,
             com.hitorro.mesh.pipelines.sinks.SinkRegistry registry) {
+        // Adapter-first — sub-modules like hitorro-mesh-pipelines-jvstype
+        // override built-ins for their spec kinds.
+        for (StepAdapter a : java.util.ServiceLoader.load(StepAdapter.class)) {
+            if (a.handles(spec)) return a.compile(spec);
+        }
         return switch (spec) {
             case StepSpec.Filter    s -> compileFilter(s.expr());
             case StepSpec.Project   s -> compileProject(s.cols());
@@ -48,6 +53,8 @@ public final class StepFactory {
             case StepSpec.Lookup    s -> compileLookup(s.from(), s.onField(),
                                                        s.withKey(), s.adds(), registry);
             case StepSpec.GroovyMap s -> GroovyMapStep.compile(s.script());
+            case StepSpec.JvsGroovy s -> throw new UnsupportedOperationException(
+                    "jvs-groovy needs hitorro-mesh-pipelines-jvstype on the classpath");
             case StepSpec.Jvssql    s -> throw new UnsupportedOperationException(
                     "jvssql is Phase 2 (add the jvssql adapter)");
         };

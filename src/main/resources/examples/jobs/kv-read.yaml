@@ -1,0 +1,47 @@
+# Second half of the "job chains via KV store" demo. Reads back the
+# 15 rows kv-write put into world-cities, enriches with an
+# altitude bucket via Groovy, groups by country, indexes to Lucene.
+#
+# This is the "one job pushes to persistence, another picks up and
+# processes further" pattern — a compute graph across separate
+# pipeline runs. Kick this off AFTER kv-write finishes.
+#
+# Requires hitorro-mesh-pipelines-kvstore + hitorro-mesh-pipelines-lucene
+# on the classpath (SinkAdapter + SourceAdapter service-loaders wire
+# real RocksDB + Lucene in). Without them the source falls back to
+# the built-in stub which reads a TSV — most rows won't parse.
+job: kv-read
+version: "1"
+nodes:
+  - id: read
+    pipeline:
+      source: {kind: kvstore, name: world-cities}
+      steps:
+        - kind: groovy-map
+          script: |
+            row.tier = row.pop_m > 15 ? 'mega'
+                     : row.pop_m > 5  ? 'large'
+                     :                  'mid'
+            return row
+      sinks:
+        - {kind: memory-table, name: cities-tiered}
+        - {kind: counting, label: read}
+
+  - id: by-country
+    depends: [read]
+    pipeline:
+      source: {kind: ref, node: read}
+      reduce:
+        group-by: [country]
+        aggs:
+          - {name: n,      kind: COUNT}
+          - {name: max_pop,kind: MAX, of: pop_m}
+      sinks: [{kind: memory-table, name: cities-by-country}, {kind: counting, label: rollup}]
+
+  - id: index
+    depends: [read]
+    pipeline:
+      source: {kind: ref, node: read}
+      sinks:
+        - {kind: lucene, name: cities-search, storeSource: true}
+        - {kind: counting, label: indexed}

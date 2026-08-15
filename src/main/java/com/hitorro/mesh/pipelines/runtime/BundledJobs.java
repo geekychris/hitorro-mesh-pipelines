@@ -21,6 +21,8 @@ public final class BundledJobs {
             "nats-echo",
             "nats-publisher",
             "airports-groovy",
+            "kv-write",
+            "kv-read",
     };
 
     private BundledJobs() { }
