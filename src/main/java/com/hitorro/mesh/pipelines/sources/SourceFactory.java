@@ -75,7 +75,20 @@ public final class SourceFactory {
             case SourceSpec.Lucene     s -> throw new UnsupportedOperationException(
                     "lucene source is Phase 2 (needs the lucene adapter)");
             case SourceSpec.Sql        s -> openSql(s.sql());
+            case SourceSpec.ShuffleBucket s -> openShuffleBucket(
+                    s.subjectPrefix(), s.bucket(), s.expectedMappers(), s.natsUrl(), cancelled);
         };
+    }
+
+    private Iterator<JsonNode> openShuffleBucket(String subjectPrefix, int bucket,
+                                                  int expectedMappers, String natsUrl,
+                                                  AtomicBoolean cancelled) throws IOException {
+        try {
+            return new com.hitorro.mesh.pipelines.sources.ShuffleBucketSource(
+                    subjectPrefix, bucket, expectedMappers, natsUrl, cancelled);
+        } catch (Exception e) {
+            throw new IOException("shuffle-bucket source failed to open: " + e.getMessage(), e);
+        }
     }
 
     /**

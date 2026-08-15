@@ -79,6 +79,8 @@ public final class SinkRegistry {
             case SinkSpec.MemoryTable s -> new MemoryTableSink(s.name(), memoryTable(s.name()));
             case SinkSpec.Nats       s -> createNats(s);
             case SinkSpec.Kafka      s -> createKafka(s);
+            case SinkSpec.ShuffleFanout s -> new com.hitorro.mesh.pipelines.sinks.ShuffleFanoutSink(
+                    s.subjectPrefix(), s.buckets(), s.keyExpr(), s.mapperId(), s.natsUrl());
             case SinkSpec.CsvFile    s -> throw new UnsupportedOperationException(
                     "csv-file sink is Phase 2 (add jackson-csv or the basefile adapter)");
             case SinkSpec.JsonFile   s -> throw new UnsupportedOperationException(

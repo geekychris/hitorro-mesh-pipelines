@@ -6,8 +6,11 @@ package com.hitorro.mesh.pipelines.runtime;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.hitorro.mesh.pipelines.model.AggSpec;
 import com.hitorro.mesh.pipelines.model.JobSpec;
 import com.hitorro.mesh.pipelines.model.NodeSpec;
+import com.hitorro.mesh.pipelines.model.PipelineSpec;
+import com.hitorro.mesh.pipelines.model.ReduceSpec;
 import com.hitorro.mesh.pipelines.model.SinkSpec;
 import com.hitorro.mesh.pipelines.model.SourceSpec;
 import com.hitorro.mesh.pipelines.parse.JobSpecYaml;
@@ -113,6 +116,15 @@ public final class PipelineScheduler implements AutoCloseable {
             java.util.Map<String, String> nodeToAgent = new java.util.HashMap<>();
             for (NodeSpec node : spec.nodes()) {
                 if (status.cancelRequested.get()) break;
+
+                // Auto-shuffle-reduce: if node has reduce.shuffle=true,
+                // split into mapper × M + reducer × K and dispatch each.
+                if (node.pipeline().reduce() != null
+                        && node.pipeline().reduce().shuffle()) {
+                    dispatchShuffleReduce(node, targetAgents, status, nodeToAgent);
+                    continue;
+                }
+
                 String preferred = pickAgent(node, targetAgents, nodeToAgent);
                 java.util.Set<String> blacklist = new java.util.HashSet<>();
                 boolean ok = false;
@@ -163,6 +175,136 @@ public final class PipelineScheduler implements AutoCloseable {
             status.finishedAt = Instant.now();
         }
         return status;
+    }
+
+    /**
+     * Auto-split a reduce node into M mapper tasks + K reducer tasks
+     * connected via NATS shuffle bucket subjects.
+     *
+     * <p>Mapper (one per available agent):</p>
+     * <pre>
+     *   source: (original)          steps: (original)
+     *   sinks: [ ShuffleFanout(subjectPrefix=mesh.pipeline.shuffle.&lt;taskId&gt;,
+     *                          buckets=K, keyExpr=first group-by,
+     *                          mapperId=m0..M-1) ]
+     * </pre>
+     *
+     * <p>Reducer (one per bucket, spread across agents):</p>
+     * <pre>
+     *   source: ShuffleBucket(subjectPrefix, bucket=0..K-1, expectedMappers=M)
+     *   reduce: (rewritten aggs — COUNT becomes SUM of partials)
+     *   sinks:  (original)
+     * </pre>
+     *
+     * <p>Rewrites: COUNT → SUM of partial counts. SUM/MIN/MAX stay
+     * associative. AVG needs SUM+COUNT decomposition (not implemented;
+     * mapper emits raw and reducer averages) — for now AVG only works
+     * when shuffle is off. FIRST/LAST/COLLECT/DISTINCT_COUNT are
+     * left as-is (best-effort at reducer).</p>
+     */
+    private void dispatchShuffleReduce(NodeSpec original, List<String> targetAgents,
+                                       JobStatus status,
+                                       java.util.Map<String, String> nodeToAgent) throws Exception {
+        ReduceSpec r = original.pipeline().reduce();
+        int buckets  = Math.max(1, r.buckets());
+        int mappers  = Math.max(1, targetAgents.size());
+        String taskId = "shuf-" + TASK_SEQ.incrementAndGet();
+        String subjectPrefix = "mesh.pipeline.shuffle." + taskId;
+        String keyExpr = r.groupBy().isEmpty() ? "id" : r.groupBy().get(0);
+
+        status.addEvent(new JobStatus.ProgressEvent(original.id(), "shuffle-plan",
+                "split into " + mappers + " mapper(s) × " + buckets + " reducer(s)",
+                Instant.now()));
+
+        // Reducers FIRST — they need to subscribe to their bucket subjects
+        // before mappers publish, otherwise core NATS drops messages sent
+        // when no subscriber exists yet.
+        java.util.List<Thread> reducerThreads = new java.util.ArrayList<>();
+        for (int b = 0; b < buckets; b++) {
+            String assigned = targetAgents.get(b % targetAgents.size());
+            NodeSpec reducer = new NodeSpec(original.id() + "-reduce-" + b, null,
+                    new PipelineSpec(
+                            new SourceSpec.ShuffleBucket(subjectPrefix, b, mappers, natsUrl),
+                            java.util.List.of(),
+                            rewriteForShuffle(r),
+                            original.pipeline().sinks()
+                    ), java.util.List.of());
+            Thread t = new Thread(() -> {
+                try { dispatchOne(reducer, assigned, status); }
+                catch (Exception e) { status.addEvent(new JobStatus.ProgressEvent(
+                        reducer.id(), "error", e.getMessage(), Instant.now())); }
+            }, "shuffle-reducer-" + b);
+            t.start();
+            reducerThreads.add(t);
+        }
+        // Give reducers time to reach their assigned agent AND establish
+        // their NATS subscriptions before mappers publish. The round trip
+        // is: driver → NATS → agent → PipelineAgent handler → JobRunner
+        // startup → SourceFactory.open → ShuffleBucketSource → NATS
+        // subscribe. 2 s is generous for a single-host smoke stack; a
+        // real deployment should use JetStream (persistent subjects) or
+        // an explicit ready-handshake instead of a sleep.
+        try { Thread.sleep(2000); } catch (InterruptedException ignored) { }
+
+        // Then mappers: same source + steps as original, sink to shuffle
+        // bucket subjects. No reduce at mapper — reducer does all agg.
+        java.util.List<Thread> mapperThreads = new java.util.ArrayList<>();
+        for (int mi = 0; mi < mappers; mi++) {
+            String mapperId = "m" + mi;
+            String assigned = targetAgents.get(mi % targetAgents.size());
+            NodeSpec mapper = new NodeSpec(original.id() + "-map-" + mi, null,
+                    new PipelineSpec(
+                            original.pipeline().source(),
+                            original.pipeline().steps(),
+                            null,
+                            java.util.List.of(new SinkSpec.ShuffleFanout(
+                                    subjectPrefix, buckets, keyExpr, mapperId, natsUrl))
+                    ), java.util.List.of());
+            Thread t = new Thread(() -> {
+                try { dispatchOne(mapper, assigned, status); }
+                catch (Exception e) { status.addEvent(new JobStatus.ProgressEvent(
+                        mapper.id(), "error", e.getMessage(), Instant.now())); }
+            }, "shuffle-mapper-" + mapperId);
+            t.start();
+            mapperThreads.add(t);
+        }
+
+        // Wait for everyone.
+        for (Thread t : mapperThreads)  t.join();
+        for (Thread t : reducerThreads) t.join();
+
+        // Aggregate synthetic status onto the original node's status.
+        JobStatus.NodeStatus origNs = status.node(original.id());
+        long totalRowsOut = 0;
+        boolean allGood = true;
+        for (int mi = 0; mi < mappers; mi++) {
+            var s = status.node(original.id() + "-map-" + mi);
+            allGood &= s.state == JobStatus.State.SUCCEEDED;
+            totalRowsOut += s.rowsOut;
+        }
+        long reducerOut = 0;
+        for (int bi = 0; bi < buckets; bi++) {
+            var s = status.node(original.id() + "-reduce-" + bi);
+            allGood &= s.state == JobStatus.State.SUCCEEDED;
+            reducerOut += s.rowsOut;
+        }
+        origNs.state = allGood ? JobStatus.State.SUCCEEDED : JobStatus.State.FAILED;
+        origNs.rowsIn = totalRowsOut;
+        origNs.rowsOut = reducerOut;
+        origNs.assignedAgent = "shuffle(" + mappers + "×M + " + buckets + "×R)";
+        origNs.finishedAt = Instant.now();
+    }
+
+    /**
+     * Rewrite mapper aggs → reducer aggs. Since we shuffle raw rows (no
+     * mapper-side pre-aggregation), the reducer runs the original aggs
+     * on the shuffled rows. This keeps correctness for every AggKind
+     * — including AVG — at the cost of higher network traffic.
+     * Optimising with mapper-side partials (COUNT → local COUNT →
+     * SUM at reducer) is a future refinement.
+     */
+    private ReduceSpec rewriteForShuffle(ReduceSpec r) {
+        return new ReduceSpec(r.groupBy(), r.aggs(), false, 1);
     }
 
     /**

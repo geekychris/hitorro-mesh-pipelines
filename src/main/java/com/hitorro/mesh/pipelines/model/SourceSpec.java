@@ -25,6 +25,7 @@ import java.util.List;
     @JsonSubTypes.Type(value = SourceSpec.Sql.class,        name = "sql"),
     @JsonSubTypes.Type(value = SourceSpec.Nats.class,       name = "nats"),
     @JsonSubTypes.Type(value = SourceSpec.Kafka.class,      name = "kafka"),
+    @JsonSubTypes.Type(value = SourceSpec.ShuffleBucket.class,name = "_shuffle-bucket"),
 })
 public sealed interface SourceSpec {
 
@@ -79,4 +80,14 @@ public sealed interface SourceSpec {
      * follow-up when nodes learn to partition.
      */
     record Kafka(String bootstrap, String topic, String groupId) implements SourceSpec { }
+
+    /**
+     * <b>Internal.</b> Subscribes to a single shuffle-bucket NATS subject
+     * ({@code subjectPrefix + "." + bucket}), buffers rows, and yields
+     * them once {@code expectedMappers} EOS envelopes have arrived. Used
+     * by the scheduler as the reducer's source in auto-split reduce.
+     * Not intended for user job specs.
+     */
+    record ShuffleBucket(String subjectPrefix, int bucket, int expectedMappers,
+                        String natsUrl) implements SourceSpec { }
 }

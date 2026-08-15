@@ -1,0 +1,51 @@
+# Auto shuffle-reduce — the scheduler transparently splits a single
+# reduce node into M mapper tasks + K reducer tasks connected by
+# NATS shuffle bucket subjects.
+#
+# Set reduce.shuffle: true and reduce.buckets: <K>. Submit via
+# /mesh/jobs/run-distributed. The scheduler:
+#
+#   1. Fans out M mapper tasks (one per available agent). Each runs
+#      the source + steps and hash-partitions its rows by the first
+#      group-by column into K NATS bucket subjects
+#      (mesh.pipeline.shuffle.<taskId>.<bucketNum>).
+#   2. Fans out K reducer tasks (round-robin across agents). Each
+#      subscribes to its bucket, waits for M mapper EOSes, runs the
+#      aggregations, writes to the sinks.
+#
+# The Mesh tab shows M + K pipeline pills lit up across agents while
+# the job runs.
+#
+# All AggKinds (COUNT / SUM / AVG / MIN / MAX / etc.) work here
+# because mappers ship raw rows and reducers aggregate. Optimising
+# to mapper-side pre-aggregation with reducer combines is a future
+# refinement (bandwidth savings for high-cardinality groups).
+job: distributed-reduce-shuffle
+version: "1"
+nodes:
+  - id: sales-by-region
+    pipeline:
+      source: {kind: inline, rows: [
+        {region: NA, product: A, units: 10},
+        {region: NA, product: B, units: 20},
+        {region: NA, product: A, units: 15},
+        {region: EU, product: A, units: 30},
+        {region: EU, product: B, units: 25},
+        {region: AS, product: A, units: 40},
+        {region: AS, product: B, units: 35},
+        {region: AS, product: C, units: 45},
+        {region: SA, product: A, units: 5},
+        {region: SA, product: B, units: 8}
+      ]}
+      reduce:
+        group-by: [region]
+        shuffle: true
+        buckets: 2
+        aggs:
+          - {name: n_products, kind: COUNT}
+          - {name: total_units, kind: SUM, of: units}
+          - {name: max_batch, kind: MAX, of: units}
+          - {name: min_batch, kind: MIN, of: units}
+      sinks:
+        - {kind: memory-table, name: sales-summary}
+        - {kind: counting, label: rollup}

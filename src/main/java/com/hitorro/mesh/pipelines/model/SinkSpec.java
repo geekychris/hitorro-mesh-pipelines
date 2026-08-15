@@ -23,6 +23,7 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
     @JsonSubTypes.Type(value = SinkSpec.Kafka.class,      name = "kafka"),
     @JsonSubTypes.Type(value = SinkSpec.Counting.class,   name = "counting"),
     @JsonSubTypes.Type(value = SinkSpec.MemoryTable.class,name = "memory-table"),
+    @JsonSubTypes.Type(value = SinkSpec.ShuffleFanout.class,name = "_shuffle-fanout"),
 })
 public sealed interface SinkSpec {
 
@@ -77,4 +78,18 @@ public sealed interface SinkSpec {
      * same job process.
      */
     record MemoryTable(String name) implements SinkSpec { }
+
+    /**
+     * <b>Internal.</b> Hash-partitions each row by {@code keyExpr} into
+     * one of {@code buckets} NATS subjects
+     * ({@code subjectPrefix + "." + bucket}). Used by the scheduler when
+     * it auto-splits a reduce node into mapper × M + reducer × K tasks.
+     * Not intended for user job specs.
+     *
+     * <p>On {@link #close} the sink publishes an EOS envelope
+     * {@code {"_eos": true, "mapperId": mapperId}} to every bucket so
+     * downstream reducers know when to finalise.</p>
+     */
+    record ShuffleFanout(String subjectPrefix, int buckets, String keyExpr,
+                        String mapperId, String natsUrl) implements SinkSpec { }
 }
