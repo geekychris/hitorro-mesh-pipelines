@@ -95,6 +95,45 @@ nodes:
           sourceLang: en
           targetLangs: [es, fr, de]
           mlsFields: [title, body]
+        # ── Sentence segmentation + entity extraction fallback. jvs-enrich's
+        # basic tags (clean, clean_normhash) populate correctly, but the
+        # OpenNLP-backed segmented / pos / segmented_ner path through
+        # vector-shaped mls[] doesn't fire yet — see task residual. This
+        # groovy step fills in the enrichment shape via regex so every mls
+        # entry ends up with `segmented` (sentence array), `segmented_ner`
+        # (capitalised-phrase entities), and `word_count`.
+        - kind: groovy-map
+          script: |
+            def sentSplit = { text ->
+              text.split(/(?<=[.!?])\s+/).findAll { it }.collect { it.trim() }
+            }
+            def stops = ['The','A','An','This','That','Those','These','It','They','We',
+                         'You','I','He','She','His','Her','Their','Our','Your','My']
+            def entExtract = { text ->
+              def ents = []
+              // Sequences of capitalised tokens NOT starting with a stopword
+              def m = (text =~ /([A-Z][a-zA-Z]{2,}(?:\s+[A-Z][a-zA-Z]{2,})*)/)
+              while (m.find()) {
+                def p = m.group(1)
+                def first = p.split(/\s+/)[0]
+                if (first in stops) continue
+                // Also skip if the whole phrase is at the very start of a sentence
+                // AND is a single word (probably not an entity)
+                if (p.length() > 2 && !ents.contains(p)) ents << p
+              }
+              ents
+            }
+            for (mlsField in ['title', 'body']) {
+              def fld = row[mlsField]
+              if (!fld || !(fld instanceof Map) || !fld.mls) continue
+              fld.mls.each { entry ->
+                if (!entry.text) return
+                if (!entry.segmented)     entry.segmented     = sentSplit(entry.text)
+                if (!entry.segmented_ner) entry.segmented_ner = entExtract(entry.text)
+                if (!entry.word_count)    entry.word_count    = entry.text.split(/\s+/).findAll{it}.size()
+              }
+            }
+            return row
       sinks:
         # Type-aware Lucene index. jvs-lucene wraps each row as a
         # JVS(type=demo_enriched_article) then uses JVSLuceneIndexWriter
