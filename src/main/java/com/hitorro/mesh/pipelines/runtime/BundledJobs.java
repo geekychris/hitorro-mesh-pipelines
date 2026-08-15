@@ -20,6 +20,7 @@ public final class BundledJobs {
             "airports-typed-enrich",
             "nats-echo",
             "nats-publisher",
+            "airports-groovy",
     };
 
     private BundledJobs() { }

@@ -90,6 +90,17 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Groovy for the groovy-map step. Users author transform scripts
+             inline in job YAML; runtime evaluates with GroovyShell. Optional
+             — the module works fine without it as long as no job uses
+             groovy-map. -->
+        <dependency>
+            <groupId>org.apache.groovy</groupId>
+            <artifactId>groovy</artifactId>
+            <version>4.0.21</version>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Test scope. -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>

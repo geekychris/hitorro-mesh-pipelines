@@ -1,0 +1,52 @@
+# CSV → Groovy transform example. Same source data as airports-typed-
+# enrich, but here we express the enrichment as a Groovy script inline
+# in the job spec — free-form business logic rather than a lookup.
+#
+# The script binding:
+#   row  — mutable Map<String,Object> of the incoming row
+#   gen  — helper: gen.uuid(), gen.now(), gen.next('name'), gen.pick([…])
+#
+# Script return semantics:
+#   * a Map        → replace the row with this
+#   * mutate row + last expr non-null → return the mutated row
+#   * null         → drop the row (filter behaviour)
+job: airports-groovy
+version: "1"
+nodes:
+  - id: process
+    pipeline:
+      source: {kind: csv-file, url: "classpath:/examples/data/airports-sample.csv"}
+      steps:
+        # Coerce raw CSV strings → JVS primitives first, so the Groovy
+        # script sees ints and booleans instead of strings.
+        - {kind: to-typed, passthrough: true, fields: [
+            {name: elevation_ft, type: core_long},
+            {name: is_hub,       type: core_boolean}
+          ]}
+        - kind: groovy-map
+          script: |
+            // Add derived + generated columns to every row.
+            row.altitude_bucket = row.elevation_ft < 100  ? 'coastal'
+                               : row.elevation_ft < 1000 ? 'lowland'
+                               : row.elevation_ft < 3000 ? 'highland'
+                               :                           'alpine'
+            row.event_id = gen.uuid()
+            row.seq      = gen.next('airport')
+            row.tagged_at = gen.now()
+            // Return the mutated row — the framework re-serialises it.
+            return row
+      sinks:
+        - {kind: memory-table, name: airports-processed}
+        - {kind: ndjson-file, url: "target/airports-groovy.ndjson"}
+        - {kind: counting, label: processed}
+
+  - id: alpine-only
+    depends: [process]
+    pipeline:
+      source: {kind: ref, node: process}
+      steps:
+        # Drop rows that aren't alpine — return null from the script.
+        - {kind: groovy-map, script: "row.altitude_bucket == 'alpine' ? row : null"}
+      sinks:
+        - {kind: memory-table, name: alpine-airports}
+        - {kind: counting, label: alpine}

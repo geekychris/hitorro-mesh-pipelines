@@ -47,8 +47,7 @@ public final class StepFactory {
             case StepSpec.ToTyped   s -> compileToTyped(s.fields(), s.passthrough());
             case StepSpec.Lookup    s -> compileLookup(s.from(), s.onField(),
                                                        s.withKey(), s.adds(), registry);
-            case StepSpec.GroovyMap s -> throw new UnsupportedOperationException(
-                    "groovy-map is Phase 2 (add the groovy adapter — see docs)");
+            case StepSpec.GroovyMap s -> GroovyMapStep.compile(s.script());
             case StepSpec.Jvssql    s -> throw new UnsupportedOperationException(
                     "jvssql is Phase 2 (add the jvssql adapter)");
         };
