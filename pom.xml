@@ -32,12 +32,30 @@
     </properties>
 
     <dependencies>
-        <!-- Jackson core + YAML for spec parsing. -->
+        <!-- Core Sink<T> lives in hitorro-core; JsonNodeSinkBase +
+             NdjsonFileSink + MemoryTableSink live in hitorro-streams;
+             KafkaSink in streams-kafka; NatsSink in streams-nats.
+             Pulling them in as first-party deps rather than owning our
+             own copies. -->
         <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
-            <version>${jackson.version}</version>
+            <groupId>com.hitorro</groupId>
+            <artifactId>hitorro-streams</artifactId>
+            <version>${hitorro.version}</version>
         </dependency>
+        <dependency>
+            <groupId>com.hitorro</groupId>
+            <artifactId>hitorro-streams-kafka</artifactId>
+            <version>${hitorro.version}</version>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>com.hitorro</groupId>
+            <artifactId>hitorro-streams-nats</artifactId>
+            <version>${hitorro.version}</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Jackson YAML for JobSpec parsing. Databind + core come via streams→core. -->
         <dependency>
             <groupId>com.fasterxml.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-yaml</artifactId>

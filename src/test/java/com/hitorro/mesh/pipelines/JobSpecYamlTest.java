@@ -45,8 +45,8 @@ class JobSpecYamlTest {
 
         NodeSpec index = spec.nodes().get(2);
         assertThat(index.pipeline().sinks()).hasSize(2)
-                .anySatisfy(s -> assertThat(s).isInstanceOf(SinkSpec.KvStore.class))
-                .anySatisfy(s -> assertThat(s).isInstanceOf(SinkSpec.Lucene.class));
+                .anySatisfy(s -> assertThat(s).isInstanceOf(SinkSpec.MemoryTable.class))
+                .anySatisfy(s -> assertThat(s).isInstanceOf(SinkSpec.Counting.class));
     }
 
     @Test

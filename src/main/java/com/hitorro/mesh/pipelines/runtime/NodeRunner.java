@@ -7,11 +7,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.hitorro.mesh.pipelines.model.NodeSpec;
 import com.hitorro.mesh.pipelines.model.PipelineSpec;
 import com.hitorro.mesh.pipelines.model.StepSpec;
-import com.hitorro.mesh.pipelines.sinks.CountingSink;
-import com.hitorro.mesh.pipelines.sinks.MemoryTableSink;
-import com.hitorro.mesh.pipelines.sinks.Sink;
+import com.hitorro.mesh.pipelines.sinks.LabeledCountingSink;
 import com.hitorro.mesh.pipelines.sinks.SinkRegistry;
 import com.hitorro.mesh.pipelines.sources.SourceFactory;
+import com.hitorro.util.core.iterator.sinks.MemoryTableSink;
+import com.hitorro.util.core.iterator.sinks.Sink;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -54,7 +54,7 @@ public final class NodeRunner {
         // Always attach an auto memory-table sink so downstream refs work.
         // If the user also declared their own memory-table with a different
         // name that's fine — this one is a system-scoped default.
-        List<Sink> sinks = new ArrayList<>();
+        List<Sink<JsonNode>> sinks = new ArrayList<>();
         MemoryTableSink refSink = new MemoryTableSink(node.id(),
                 sinkRegistry.memoryTable(node.id()));
         sinks.add(refSink);
@@ -62,7 +62,7 @@ public final class NodeRunner {
 
         try {
             // Open every sink up front — fail fast on bad configs.
-            for (Sink s : sinks) s.open();
+            for (Sink<JsonNode> s : sinks) s.start();
 
             // Count source-side rows-in even when filters drop them.
             long[] rowsInHolder = { 0 };
@@ -86,7 +86,7 @@ public final class NodeRunner {
                     break;
                 }
                 JsonNode row = stream.next();
-                for (Sink s : sinks) {
+                for (Sink<JsonNode> s : sinks) {
                     try { s.add(row); }
                     catch (Exception e) {
                         status.addEvent(new JobStatus.ProgressEvent(node.id(), "sink-error",
@@ -104,7 +104,7 @@ public final class NodeRunner {
                 // shows sinks={} forever. High-throughput pipelines
                 // still amortise the map writes.
                 if ((rowsOut & 7) == 0) {
-                    for (Sink s : sinks) ns.sinkCounts.put(sinkName(s), s.count());
+                    for (Sink<JsonNode> s : sinks) ns.sinkCounts.put(sinkName(s), s.count());
                 }
                 if ((rowsOut & 1023) == 0) {
                     status.addEvent(new JobStatus.ProgressEvent(node.id(), "progress",
@@ -114,7 +114,7 @@ public final class NodeRunner {
             ns.rowsOut = rowsOut;
             ns.rowsIn  = rowsInHolder[0];
 
-            for (Sink s : sinks) ns.sinkCounts.put(sinkName(s), s.count());
+            for (Sink<JsonNode> s : sinks) ns.sinkCounts.put(sinkName(s), s.count());
 
             if (status.cancelRequested.get()) {
                 ns.state = JobStatus.State.CANCELLED;
@@ -130,7 +130,7 @@ public final class NodeRunner {
             System.err.println("[NodeRunner] " + node.id() + " failed: " + ns.error);
             e.printStackTrace(System.err);
         } finally {
-            for (Sink s : sinks) {
+            for (Sink<JsonNode> s : sinks) {
                 try { s.close(); }
                 catch (Exception ignored) { /* logged in per-sink error above */ }
             }
@@ -170,9 +170,9 @@ public final class NodeRunner {
         };
     }
 
-    private static String sinkName(Sink s) {
-        if (s instanceof MemoryTableSink m) return "memory:" + m.name();
-        if (s instanceof CountingSink c)    return "count:"  + c.label();
+    private static String sinkName(Sink<JsonNode> s) {
+        if (s instanceof MemoryTableSink m)       return "memory:" + m.name();
+        if (s instanceof LabeledCountingSink c)   return "count:"  + c.label();
         return s.getClass().getSimpleName();
     }
 }

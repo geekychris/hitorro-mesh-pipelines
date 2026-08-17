@@ -53,18 +53,14 @@ class JobRunnerLocalTest {
         assertThat(status.node("rollup").rowsOut).isEqualTo(4);
         assertThat(Files.exists(home.resolve("region-rollup.ndjson"))).isTrue();
 
-        // index: 12 rows fanned out to kv + lucene stubs
+        // index: 12 rows fanned out to memory-table + counting sinks.
+        // Real KV / Lucene fan-out is covered by the RoundTrip tests in
+        // hitorro-mesh-pipelines-kvstore and -lucene — those adapters
+        // aren't on this module's test classpath by design (SinkRegistry
+        // throws with a clear message when the adapter jars are missing).
         assertThat(status.node("index").state).isEqualTo(JobStatus.State.SUCCEEDED);
         assertThat(status.node("index").rowsOut).isEqualTo(12);
-
-        // Physical outputs.
-        assertThat(home.resolve("kv/countries-kv/entries.tsv"))
-                .exists()
-                .content().contains("USA\t{").contains("CHN\t{");
-        assertThat(home.resolve("lucene/countries-idx/docs.ndjson")).exists();
-        assertThat(home.resolve("lucene/countries-idx/INDEX-CONFIG"))
-                .exists()
-                .content().contains("storeSource=true");
+        assertThat(reg.memoryTable("countries-mem")).hasSize(12);
 
         // Rollup values — verify Asia sum matches.
         List<String> rollup = Files.readAllLines(home.resolve("region-rollup.ndjson"));

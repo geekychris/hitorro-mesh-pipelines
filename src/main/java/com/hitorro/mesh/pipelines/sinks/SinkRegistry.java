@@ -5,6 +5,12 @@ package com.hitorro.mesh.pipelines.sinks;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.hitorro.mesh.pipelines.model.SinkSpec;
+import com.hitorro.util.core.iterator.sinks.CountingSink;
+import com.hitorro.util.core.iterator.sinks.MemoryTableSink;
+import com.hitorro.util.core.iterator.sinks.NdjsonFileSink;
+import com.hitorro.util.core.iterator.sinks.Sink;
+import com.hitorro.util.core.iterator.sinks.kafka.KafkaSink;
+import com.hitorro.util.core.iterator.sinks.nats.NatsSink;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -15,15 +21,20 @@ import java.util.ServiceLoader;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Owns symbolic-name → physical location mapping for kv / lucene sinks,
- * and hosts the in-process buffers backing memory-table sinks so downstream
- * nodes can read them via {@code source: {kind: ref, ...}}.
+ * Wires {@link SinkSpec} → {@link Sink}{@code <JsonNode>}. Consults
+ * ServiceLoader-registered adapters first (so
+ * {@code hitorro-mesh-pipelines-kvstore}, {@code -lucene},
+ * {@code -jvstype} can bind their real impls); falls through to a
+ * built-in switch for the sinks whose home is core (memory-table,
+ * counting, ndjson-file, nats, kafka).
  *
- * <p>Concrete adapter modules (kvstore, lucene, basefile) will subclass or
- * decorate this registry to construct sinks backed by real RocksDB /
- * Lucene / BaseFile — the {@link #create} switch here selects the built-in
- * stub. Phase 1 semantics: durable enough to test end-to-end, sound enough
- * that adapters replace the stub cleanly.</p>
+ * <p>Every concrete sink lives in its natural home module — nothing
+ * here is a mesh-only sink apart from {@code ShuffleFanoutSink} (the
+ * hash-bucket NATS fanout used by mesh's shuffle-join). Non-mesh
+ * callers who just want to use the sinks directly should import them
+ * from {@code hitorro-streams}, {@code hitorro-streams-kafka},
+ * {@code hitorro-streams-nats}, {@code hitorro-kvstore}, or
+ * {@code hitorro-index} instead of going through this registry.</p>
  */
 public final class SinkRegistry {
 
@@ -33,8 +44,8 @@ public final class SinkRegistry {
     /**
      * Adapters loaded via ServiceLoader — sub-modules like
      * {@code hitorro-mesh-pipelines-kvstore} contribute real
-     * RocksDB / Lucene / etc. sinks. Consulted before the built-in
-     * stub switch so real impls override the fallbacks when present.
+     * RocksDB / Lucene / etc. sinks. Consulted first so real impls
+     * override built-in errors.
      */
     private final List<SinkAdapter> adapters = new ArrayList<>();
 
@@ -58,7 +69,8 @@ public final class SinkRegistry {
 
     /**
      * Retrieve (or create) the in-memory row buffer behind a
-     * {@code memory-table} sink of the given name.
+     * {@code memory-table} sink of the given name. Used by cross-node
+     * {@code source: {kind: ref, node: X}} in the pipeline runtime.
      */
     public List<JsonNode> memoryTable(String name) {
         return memoryTables.computeIfAbsent(name,
@@ -66,18 +78,22 @@ public final class SinkRegistry {
     }
 
     /** Build a fresh sink instance for one run. Caller {@link Sink#close}s. */
-    public Sink create(SinkSpec spec) {
-        // Adapter-first — sub-modules override built-in stubs.
+    public Sink<JsonNode> create(SinkSpec spec) {
+        // Adapter-first — sub-modules override built-in fallbacks.
         for (SinkAdapter a : adapters) {
             if (a.handles(spec)) return a.create(spec, home);
         }
         return switch (spec) {
             case SinkSpec.NdjsonFile s -> new NdjsonFileSink(s.url());
-            case SinkSpec.KvStore    s -> new KvStoreSink(s.name(), s.keyExpr(), home);
-            case SinkSpec.Lucene     s -> new LuceneSink(s.name(), s.storeSource(), home);
+            case SinkSpec.KvStore    s -> throw new UnsupportedOperationException(
+                    "kvstore sink needs hitorro-mesh-pipelines-kvstore on the classpath "
+                    + "— the RocksDB adapter registers itself via ServiceLoader when present");
+            case SinkSpec.Lucene     s -> throw new UnsupportedOperationException(
+                    "lucene sink needs hitorro-mesh-pipelines-lucene on the classpath "
+                    + "— the real Lucene adapter registers itself via ServiceLoader when present");
             case SinkSpec.JvsLucene  s -> throw new UnsupportedOperationException(
                     "jvs-lucene sink needs hitorro-mesh-pipelines-jvstype on the classpath");
-            case SinkSpec.Counting   s -> new CountingSink(s.label());
+            case SinkSpec.Counting   s -> new LabeledCountingSink(s.label());
             case SinkSpec.MemoryTable s -> new MemoryTableSink(s.name(), memoryTable(s.name()));
             case SinkSpec.Nats       s -> createNats(s);
             case SinkSpec.Kafka      s -> createKafka(s);
@@ -90,11 +106,8 @@ public final class SinkRegistry {
         };
     }
 
-    /**
-     * NATS sink — optional dependency. Fails with a clear message if the
-     * jnats jar isn't on the classpath.
-     */
-    private Sink createNats(SinkSpec.Nats spec) {
+    /** NATS sink — optional dep. Fails clearly if the jnats jar is absent. */
+    private Sink<JsonNode> createNats(SinkSpec.Nats spec) {
         try {
             return new NatsSink(spec.servers(), spec.subject());
         } catch (NoClassDefFoundError e) {
@@ -103,10 +116,10 @@ public final class SinkRegistry {
         }
     }
 
-    /** Kafka sink — optional dependency. */
-    private Sink createKafka(SinkSpec.Kafka spec) {
+    /** Kafka sink — optional dep. */
+    private Sink<JsonNode> createKafka(SinkSpec.Kafka spec) {
         try {
-            return new KafkaSinkImpl(spec.bootstrap(), spec.topic(), spec.keyExpr());
+            return new KafkaSink(spec.bootstrap(), spec.topic(), spec.keyExpr());
         } catch (NoClassDefFoundError e) {
             throw new UnsupportedOperationException(
                     "kafka sink needs org.apache.kafka:kafka-clients on the classpath", e);

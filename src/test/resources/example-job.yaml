@@ -30,5 +30,5 @@ nodes:
     pipeline:
       source: {kind: ref, node: seed}
       sinks:
-        - {kind: kvstore, name: countries-kv, keyExpr: "iso3"}
-        - {kind: lucene, name: countries-idx, storeSource: true}
+        - {kind: memory-table, name: countries-mem}
+        - {kind: counting, label: countries-indexed}

@@ -5,8 +5,9 @@ package com.hitorro.mesh.pipelines.sinks;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hitorro.util.core.iterator.sinks.JsonNodeSinkBase;
 
-import java.util.concurrent.atomic.AtomicLong;
+import java.io.IOException;
 
 /**
  * Mapper-side shuffle sink for auto-split reduce. Hashes each incoming
@@ -20,7 +21,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * runtime classpath (any agent using shuffle already pulls it via
  * hitorro-mesh-nats or hitorro-mesh-agent-pipelines).</p>
  */
-public final class ShuffleFanoutSink implements Sink {
+public final class ShuffleFanoutSink extends JsonNodeSinkBase {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -29,7 +30,6 @@ public final class ShuffleFanoutSink implements Sink {
     private final String keyExpr;
     private final String mapperId;
     private final String natsUrl;
-    private final AtomicLong n = new AtomicLong();
 
     private Object conn;              // io.nats.client.Connection
     private Class<?> connIface;
@@ -44,34 +44,42 @@ public final class ShuffleFanoutSink implements Sink {
     }
 
     @Override
-    public void open() throws Exception {
-        connIface = Class.forName("io.nats.client.Connection");
-        Class<?> natsClass = Class.forName("io.nats.client.Nats");
-        conn = natsClass.getMethod("connect", String.class).invoke(null, natsUrl);
+    public boolean start() throws IOException {
+        try {
+            connIface = Class.forName("io.nats.client.Connection");
+            Class<?> natsClass = Class.forName("io.nats.client.Nats");
+            conn = natsClass.getMethod("connect", String.class).invoke(null, natsUrl);
+        } catch (Exception e) {
+            throw new IOException("ShuffleFanoutSink connect failed: " + e.getMessage(), e);
+        }
+        return true;
     }
 
     @Override
-    public void add(JsonNode row) throws Exception {
-        if (conn == null) open();
+    protected void writeRow(JsonNode row) throws IOException {
+        if (conn == null) start();
         int bucket = pickBucket(row);
         String subj = subjectPrefix + "." + bucket;
         byte[] payload = JSON.writeValueAsBytes(
                 JSON.createObjectNode().set("row", row));
-        connIface.getMethod("publish", String.class, byte[].class)
-                .invoke(conn, subj, payload);
-        n.incrementAndGet();
+        try {
+            connIface.getMethod("publish", String.class, byte[].class)
+                    .invoke(conn, subj, payload);
+        } catch (Exception e) {
+            throw new IOException("ShuffleFanoutSink publish " + subj + ": " + e.getMessage(), e);
+        }
     }
 
     @Override
-    public void close() throws Exception {
+    public void close() throws IOException {
         if (conn == null) return;
         // Publish EOS to every bucket so waiting reducers know this
         // mapper has finished.
         for (int b = 0; b < buckets; b++) {
             String subj = subjectPrefix + "." + b;
-            byte[] eos = JSON.writeValueAsBytes(
-                    JSON.createObjectNode().put("_eos", true).put("mapperId", mapperId));
             try {
+                byte[] eos = JSON.writeValueAsBytes(
+                        JSON.createObjectNode().put("_eos", true).put("mapperId", mapperId));
                 connIface.getMethod("publish", String.class, byte[].class)
                         .invoke(conn, subj, eos);
             } catch (Exception ignored) { }
@@ -81,9 +89,8 @@ public final class ShuffleFanoutSink implements Sink {
                     .invoke(conn, java.time.Duration.ofSeconds(5));
         } catch (Exception ignored) { }
         try { connIface.getMethod("close").invoke(conn); } catch (Exception ignored) { }
+        conn = null;
     }
-
-    @Override public long count() { return n.get(); }
 
     private int pickBucket(JsonNode row) {
         JsonNode v = pluck(row, keyExpr);

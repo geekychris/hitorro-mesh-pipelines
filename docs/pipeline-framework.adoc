@@ -1,0 +1,447 @@
+= Pipeline Framework
+:toc: left
+:toclevels: 3
+:sectnums:
+:source-highlighter: rouge
+
+`hitorro-mesh-pipelines` is a small DAG runtime for the mesh. A job is
+a directed graph of processing nodes; each node is a
+`source → steps → reduce? → sinks[]` pipeline. Nodes wire together via
+explicit `depends[]` and via `source: {kind: ref, node: X}` which reads
+another node's `memory-table` output.
+
+Related: xref:../../docs/hitorro-user-guide.adoc[HiTorro User Guide] ·
+xref:../../hitorro-jsontypesystem/docs/enrichment.adoc[Enrichment] ·
+xref:../../hitorro-index/docs/lucene-integration.adoc[Indexing]
+
+**Skip to <<extending-transforms>> if you want to add a mapping
+function.** **Skip to <<extending-sinks>> if you want to add a sink.**
+
+== Model — YAML shape
+
+A minimum spec is one node with a source, no steps, and one sink:
+
+[source,yaml]
+----
+job: hello
+version: "1"
+nodes:
+  - id: n1
+    pipeline:
+      source: {kind: inline, rows: [{msg: hi}, {msg: bye}]}
+      sinks:
+        - {kind: counting, label: n}
+----
+
+Realistic multi-node with a reduce and cross-node ref:
+
+[source,yaml]
+----
+job: countries-and-rollup
+version: "1"
+nodes:
+  - id: countries
+    pipeline:
+      source: {kind: ndjson-file, url: "file:./countries.ndjson"}
+      steps:
+        - {kind: filter, expr: "population > 50000000"}
+        - {kind: project, cols: [iso3, name, region, population]}
+      sinks:
+        - {kind: memory-table, name: countries-mem}
+        - {kind: counting, label: countries}
+
+  - id: by-region
+    depends: [countries]
+    pipeline:
+      source: {kind: ref, node: countries}
+      reduce:
+        group-by: [region]
+        aggs:
+          - {name: n, kind: COUNT}
+          - {name: total_pop, kind: SUM, of: population}
+      sinks:
+        - {kind: memory-table, name: by-region}
+        - {kind: counting, label: by-region}
+----
+
+Every field maps to a Java record in `com.hitorro.mesh.pipelines.model`
+(`JobSpec`, `NodeSpec`, `PipelineSpec`, `SourceSpec`, `StepSpec`,
+`ReduceSpec`, `AggSpec`, `SinkSpec`). Jackson polymorphic dispatch via
+the `kind` discriminator field.
+
+== Adapter architecture
+
+The pipeline runtime knows nothing about specific kinds. Adapters
+register via `ServiceLoader`:
+
+....
+                     ┌────────────────────┐
+                     │ hitorro-mesh-      │
+                     │ pipelines (core)   │
+                     │                    │
+                     │  JobRunner         │
+                     │  NodeRunner        │
+                     │  SinkRegistry ─────┼──▶ ServiceLoader<SinkAdapter>
+                     │  SourceFactory ────┼──▶ ServiceLoader<SourceAdapter>
+                     │  StepFactory ──────┼──▶ ServiceLoader<StepAdapter>
+                     │                    │
+                     └────────────────────┘
+                              ▲
+              ┌───────────────┼──────────────────┐
+              │               │                  │
+   ┌──────────────────┐ ┌──────────────┐ ┌─────────────────┐
+   │ pipelines-jvstype│ │pipelines-    │ │ pipelines-      │
+   │ · JvsLuceneSink  │ │lucene        │ │ kvstore         │
+   │ · JvsEnrichStep  │ │ · Lucene     │ │ · RocksDbKvSink │
+   │ · JvsTranslateStp│ │   IndexSink  │ │ · RocksDbKvSrc  │
+   │ · JvsGroovyStep  │ │ · LuceneSrc  │ │                 │
+   └──────────────────┘ └──────────────┘ └─────────────────┘
+....
+
+Drop the corresponding jar on the classpath and its adapters register
+automatically. Missing adapter → `SinkRegistry` throws a clear
+"add jar X" error, not silent wrong output.
+
+== Runtime — JobRunner and NodeRunner
+
+`JobRunner.run(spec)` does the driver-local variant:
+
+1. Topological sort by `depends[]` (`topoRank`) — cycles fail cleanly.
+2. Per node in rank order:
+   - `SourceFactory.open(sourceSpec)` → `Iterator<JsonNode>`
+   - Wrap with `StepFactory.chain(steps)`
+   - If `reduce`: buffer into `ReduceEngine` → SQL group-by via
+     `JvsSqlEngine.registerStream("_reduce_in", …)` — no re-implementation
+     of hash-agg
+   - Fan out to every `Sink` from `SinkRegistry.create(sinkSpec)`
+   - Track per-node `JobStatus.NodeStatus` (rowsIn, rowsOut,
+     sinkCounts, timing)
+3. On EOS or exception, `JobRegistry.onTerminal(status)` persists to
+   `~/.hitorro/pipelines/jobs.ndjson` — survives restarts.
+
+`JobScheduler` is the distributed variant — dispatches each node's
+partition-instance to a mesh agent advertising the `pipeline-node`
+capability. Same node model; different execution site.
+
+== Sink lifecycle
+
+Every `Sink` implements:
+
+[source,java]
+----
+public interface Sink extends AutoCloseable {
+    default void open() throws Exception { }                  // once, before first add
+    void add(JsonNode row) throws Exception;                  // per row
+    default void addIdempotent(String taskId, long seq, JsonNode row) throws Exception {
+        add(row);                                             // override for exactly-once
+    }
+    long count();                                             // total rows written
+    @Override void close() throws Exception;                  // once, after EOS
+}
+----
+
+Adapters that back a persistent store (RocksDB, Lucene) should
+override `addIdempotent` and dedup by `(taskId, seq)` so retries
+don't double-write.
+
+[[extending-transforms]]
+== Extending — add a row-by-row mapping function (step)
+
+Steps are `Function<JsonNode, JsonNode>` compiled per node. Return
+`null` from your function to DROP the row from the downstream. Return
+a new node to REPLACE the row (or mutate + return the same node).
+
+=== Recipe
+
+**Step 1** — add a case to the `StepSpec` sealed interface so YAML can
+parse your kind:
+
+[source,java]
+----
+// hitorro-mesh-pipelines/src/main/java/.../model/StepSpec.java
+@JsonSubTypes({
+    ...
+    @JsonSubTypes.Type(value = StepSpec.Uppercase.class,      name = "uppercase"),
+    ...
+})
+public sealed interface StepSpec {
+    ...
+    record Uppercase(String field) implements StepSpec { }
+}
+----
+
+**Step 2** — implement `StepAdapter` in whatever module makes sense
+(a new module, or if it's JVS-specific, `hitorro-mesh-pipelines-jvstype`):
+
+[source,java]
+----
+public final class UppercaseStepAdapter implements StepAdapter {
+
+    @Override
+    public boolean handles(StepSpec spec) {
+        return spec instanceof StepSpec.Uppercase;
+    }
+
+    @Override
+    public Function<JsonNode, JsonNode> compile(StepSpec spec) {
+        StepSpec.Uppercase s = (StepSpec.Uppercase) spec;
+        String field = s.field();
+        return row -> {
+            if (!row.isObject()) return row;
+            ObjectNode obj = (ObjectNode) row;
+            JsonNode v = obj.get(field);
+            if (v != null && v.isTextual()) obj.put(field, v.asText().toUpperCase());
+            return obj;
+        };
+    }
+}
+----
+
+**Step 3** — register via `META-INF/services`:
+
+[source]
+----
+# src/main/resources/META-INF/services/com.hitorro.mesh.pipelines.runtime.StepAdapter
+com.example.pipelines.UppercaseStepAdapter
+----
+
+**Step 4** — you can now use it in any job spec:
+
+[source,yaml]
+----
+- kind: uppercase
+  field: name
+----
+
+**Step 5** (optional but recommended) — document it in the UI. Open
+`hitorro-mesh-driver-app/src/main/resources/static/ui/app.js`, find
+`PL_STEP_KINDS`, add:
+
+[source,js]
+----
+uppercase: {
+  fields: [{name:'field', placeholder:'field name to uppercase'}],
+  doc: 'step-uppercase',
+  hint: 'uppercases the string value at row[field]',
+}
+----
+
+And add to `PL_DOCS.categories.Steps`:
+
+[source,js]
+----
+['step-uppercase', 'step: uppercase', 'uppercases one text field',
+ `- {kind: uppercase, field: name}`],
+----
+
+Now the Build sub-tab has a `+ uppercase` button and the Docs sub-tab
+has a reference entry.
+
+=== Existing step reference implementations
+
+[cols="2,2,3", options="header"]
+|===
+| Kind             | Class                                                    | What it does
+| `filter`         | `runtime/StepFactory.java` (built-in)                    | Groovy boolean predicate
+| `project`        | `runtime/StepFactory.java` (built-in)                    | keep only listed cols
+| `set-field`      | `runtime/StepFactory.java` (built-in)                    | constant field
+| `groovy-map`     | `runtime/GroovyMapStep.java` (built-in)                  | full Groovy row→row
+| `jvs-groovy`     | `pipelines-jvstype/JvsGroovyStepAdapter.java`            | JVS-typed Groovy DSL via `GroovyTransformMapper`
+| `jvs-enrich`     | `pipelines-jvstype/JvsEnrichStepAdapter.java`            | run JVS enrichment projection
+| `jvs-translate`  | `pipelines-jvstype/JvsTranslateStepAdapter.java`         | translate mls fields via `HttpOllamaClient`
+|===
+
+For anything JVS-typed, prefer `jvs-groovy` (via `GroovyTransformMapper`)
+over a hand-rolled StepAdapter — it gets you the full type-aware
+transform DSL for free.
+
+[[extending-sinks]]
+== Extending — add a sink
+
+Same pattern as steps, one interface deeper:
+
+=== Recipe
+
+**Step 1** — add a case to `SinkSpec`:
+
+[source,java]
+----
+// hitorro-mesh-pipelines/src/main/java/.../model/SinkSpec.java
+@JsonSubTypes({
+    ...
+    @JsonSubTypes.Type(value = SinkSpec.Elasticsearch.class, name = "elasticsearch"),
+    ...
+})
+public sealed interface SinkSpec {
+    ...
+    record Elasticsearch(String url, String index, String keyExpr) implements SinkSpec { }
+}
+----
+
+**Step 2** — implement `Sink`:
+
+[source,java]
+----
+public final class ElasticsearchSink implements Sink {
+    private final String url;
+    private final String index;
+    private final String keyExpr;
+    private final AtomicLong n = new AtomicLong();
+    private HttpClient http;
+
+    public ElasticsearchSink(String url, String index, String keyExpr) {
+        this.url = url;
+        this.index = index;
+        this.keyExpr = keyExpr;
+    }
+
+    @Override
+    public void open() throws Exception {
+        http = HttpClient.newHttpClient();
+    }
+
+    @Override
+    public void add(JsonNode row) throws Exception {
+        String key = Propaccess.of(keyExpr).getOrNull(row);
+        String body = new ObjectMapper().writeValueAsString(row);
+        http.send(HttpRequest.newBuilder(URI.create(url + "/" + index + "/_doc/" + key))
+                .header("content-type", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString(body))
+                .build(), HttpResponse.BodyHandlers.discarding());
+        n.incrementAndGet();
+    }
+
+    @Override public long count() { return n.get(); }
+    @Override public void close() throws Exception { /* nothing to close */ }
+}
+----
+
+**Step 3** — implement `SinkAdapter`:
+
+[source,java]
+----
+public final class ElasticsearchAdapter implements SinkAdapter {
+    @Override public boolean handles(SinkSpec spec) {
+        return spec instanceof SinkSpec.Elasticsearch;
+    }
+    @Override public Sink create(SinkSpec spec, Path home) {
+        SinkSpec.Elasticsearch s = (SinkSpec.Elasticsearch) spec;
+        return new ElasticsearchSink(s.url(), s.index(), s.keyExpr());
+    }
+}
+----
+
+**Step 4** — register:
+
+[source]
+----
+# src/main/resources/META-INF/services/com.hitorro.mesh.pipelines.sinks.SinkAdapter
+com.example.pipelines.ElasticsearchAdapter
+----
+
+**Step 5** — use it:
+
+[source,yaml]
+----
+sinks:
+  - {kind: elasticsearch, url: "http://localhost:9200", index: articles, keyExpr: "id.id"}
+----
+
+**Step 6** — document in the UI (same as steps: `PL_SINK_KINDS` +
+`PL_DOCS.categories.Sinks`).
+
+=== Sink lifecycle notes
+
+* `open()` fires exactly once, before first `add(row)`. Use it for
+  connection setup, directory creation, index open.
+* `add(row)` fires per row. Throw only on unrecoverable errors —
+  the exception fails the node and cascades to any dependents.
+* If your sink talks to a durable store (KV, Lucene, HTTP with an
+  idempotency key), override `addIdempotent(taskId, seq, row)` to
+  dedup on retry. The scheduler bumps `seq` per task; retries re-send
+  earlier `seq` values.
+* `count()` should be cheap — the UI polls it during runs.
+* `close()` fires on both success AND failure of the node. Flush,
+  commit, close resources here.
+
+=== Existing sink reference implementations
+
+[cols="2,2,3", options="header"]
+|===
+| Kind             | Class                                                     | Notes
+| `memory-table`   | `sinks/MemoryTableSink.java` (built-in)                   | In-process buffer; other nodes read via `source: ref`
+| `counting`       | `sinks/CountingSink.java` (built-in)                      | Discards rows, counts them
+| `ndjson-file`    | `sinks/NdjsonFileSink.java` (built-in)                    | One JSON per line; gz by extension
+| `shuffle-fanout` | `sinks/ShuffleFanoutSink.java` (built-in)                 | Distributed reduce: hash-bucket to NATS subjects
+| `nats`           | `sinks/NatsSink.java` (built-in, optional dep)            | Publish rows to a subject
+| `kafka`          | `sinks/KafkaSinkImpl.java` (built-in, optional dep)       | Publish to a topic
+| `kvstore`        | `pipelines-kvstore/RocksDbKvStoreSink.java`               | RocksDB put keyed by `keyExpr`
+| `lucene`         | `pipelines-lucene/LuceneIndexSink.java`                   | Generic (schema-less) Lucene writer
+| `jvs-lucene`     | `pipelines-jvstype/JvsLuceneSink.java`                    | Type-aware via `JVSLuceneIndexWriter`
+|===
+
+== Extending — add a source
+
+Same pattern one more time — `SourceSpec` case + `SourceAdapter` +
+`ServiceLoader`. Source signature is `Iterator<JsonNode>`; return an
+iterator that closes cleanly when exhausted.
+
+Reference: `pipelines-kvstore/RocksDbKvStoreSource.java` (implements
+`Iterator<JsonNode>` over a `RocksIterator`).
+
+Streaming sources should return a `CloseableIterator` that respects
+the `AtomicBoolean cancelled` flag (see `SourceAdapter.open(spec,
+home, cancelled)` signature). `NatsSource` is the reference.
+
+== Groovy scripts — the fastest path for one-off logic
+
+If you don't want to build a whole StepAdapter for a one-off
+transform, use `kind: groovy-map`:
+
+[source,yaml]
+----
+- kind: groovy-map
+  script: |
+    row.slug = (row.title ?: '').toLowerCase().replace(' ', '-')
+    row.short_desc = row.description?.take(120)
+    return row
+----
+
+The script sees `row` (the current `JsonNode`) and `gen` (a
+`DataGenerators` helper with `now()`, `uuid()`, etc.). Return the
+modified row, or `null` to drop.
+
+For JVS-typed transforms with access to `AIOperations` (translate,
+summarize, ask), use `kind: jvs-groovy` — same DSL but wraps
+`GroovyTransformMapper`. See
+xref:../../hitorro-util/docs/DATA_MAPPER.md[Data Mapper DSL] for the
+full DSL reference.
+
+== Job history + progress
+
+Every terminal run persists to `~/.hitorro/pipelines/jobs.ndjson`.
+Replay on driver boot rehydrates in-memory placeholders so the UI's
+History sub-tab shows the full record.
+
+Live progress fires via SSE on `GET /mesh/jobs/{id}/events`:
+
+[source]
+----
+event: node
+data: {"jobId":"job-…","nodeId":"countries","state":"RUNNING","rowsIn":10,"rowsOut":5}
+....
+event: terminal
+data: {"jobId":"job-…","state":"SUCCEEDED"}
+----
+
+== Where to read more
+
+* xref:../../hitorro-jsontypesystem/docs/enrichment.adoc[Enrichment] —
+  how `jvs-enrich` compiles the projection tree
+* xref:../../hitorro-jsontypesystem/docs/jvs-types.adoc[JVS Types] —
+  what the type structure looks like
+* xref:../../hitorro-index/docs/lucene-integration.adoc[Indexing] —
+  how `jvs-lucene` sink projects rows into Lucene
+* xref:../../hitorro-util/docs/DATA_MAPPER.md[Data Mapper DSL] —
+  the Groovy DSL powering `jvs-groovy`
+* Source: `hitorro-mesh-pipelines/src/main/java/com/hitorro/mesh/pipelines/`

@@ -11,8 +11,8 @@ import com.hitorro.mesh.pipelines.runtime.BundledJobs;
 import com.hitorro.mesh.pipelines.runtime.GroovyMapStep;
 import com.hitorro.mesh.pipelines.runtime.JobRunner;
 import com.hitorro.mesh.pipelines.runtime.JobStatus;
-import com.hitorro.mesh.pipelines.sinks.MemoryTableSink;
 import com.hitorro.mesh.pipelines.sinks.SinkRegistry;
+import com.hitorro.util.core.iterator.sinks.MemoryTableSink;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
