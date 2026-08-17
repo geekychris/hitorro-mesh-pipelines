@@ -49,6 +49,21 @@ public final class SinkRegistry {
      */
     private final List<SinkAdapter> adapters = new ArrayList<>();
 
+    /**
+     * Optional decorators applied AFTER the base sink is built.
+     * Each decorator sees the {@link SinkSpec} + built {@link Sink}
+     * and may return a wrapped Sink (typically to hook onto lifecycle
+     * events like {@code close}). Chained in registration order.
+     *
+     * <p>Primary caller: driver-app's auto-register decorator, which
+     * wraps NDJSON-file sinks whose spec has {@code registerAsTable}
+     * set and publishes a {@code POST /mesh/queries/register-existing}
+     * at close so the output becomes queryable via SQL. Any Spring
+     * bean that wants a similar close-time hook registers here.</p>
+     */
+    private final List<java.util.function.BiFunction<SinkSpec, Sink<JsonNode>, Sink<JsonNode>>> decorators
+            = new ArrayList<>();
+
     public SinkRegistry(Path home) {
         this.home = home;
         for (SinkAdapter a : ServiceLoader.load(SinkAdapter.class)) adapters.add(a);
@@ -57,6 +72,15 @@ public final class SinkRegistry {
     /** Register a sink adapter programmatically (mainly for tests). */
     public void register(SinkAdapter adapter) {
         adapters.add(adapter);
+    }
+
+    /**
+     * Register a sink decorator. Every subsequent {@link #create}
+     * pipes the built sink through each decorator in order; each
+     * decorator returns the (possibly wrapped) sink for the next.
+     */
+    public void registerDecorator(java.util.function.BiFunction<SinkSpec, Sink<JsonNode>, Sink<JsonNode>> d) {
+        decorators.add(d);
     }
 
     public static SinkRegistry withDefaultHome() {
@@ -77,8 +101,17 @@ public final class SinkRegistry {
                 k -> java.util.Collections.synchronizedList(new java.util.ArrayList<>()));
     }
 
-    /** Build a fresh sink instance for one run. Caller {@link Sink#close}s. */
+    /** Build a fresh sink instance for one run. Caller {@link Sink#close}s.
+     *  Passes the base sink through every registered decorator before
+     *  returning, so lifecycle wrappers (auto-register, metrics, etc.)
+     *  see every created sink. */
     public Sink<JsonNode> create(SinkSpec spec) {
+        Sink<JsonNode> base = buildBase(spec);
+        for (var d : decorators) base = d.apply(spec, base);
+        return base;
+    }
+
+    private Sink<JsonNode> buildBase(SinkSpec spec) {
         // Adapter-first — sub-modules override built-in fallbacks.
         for (SinkAdapter a : adapters) {
             if (a.handles(spec)) return a.create(spec, home);

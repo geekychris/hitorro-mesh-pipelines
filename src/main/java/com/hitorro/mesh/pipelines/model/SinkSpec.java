@@ -28,8 +28,35 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 })
 public sealed interface SinkSpec {
 
-    /** NDJSON file — one JSON per line, compression via extension. */
-    record NdjsonFile(String url) implements SinkSpec { }
+    /**
+     * NDJSON file — one JSON per line, compression via extension.
+     *
+     * <p>When {@code registerAsTable} is non-null, the pipeline runner
+     * (or a decorator on {@link com.hitorro.mesh.pipelines.sinks.SinkRegistry})
+     * publishes a
+     * {@code POST /mesh/queries/register-existing} at sink close so the
+     * output becomes queryable via SQL immediately. Bridge between
+     * pipeline sinks and the mesh's runtime-table story.</p>
+     */
+    record NdjsonFile(String url, RegisterAsTable registerAsTable) implements SinkSpec {
+        /** Back-compat single-arg — no auto-register. */
+        public NdjsonFile(String url) { this(url, null); }
+    }
+
+    /**
+     * Options that turn a pipeline NDJSON sink into a queryable table
+     * on close. Fields mirror the register-existing endpoint's request
+     * body. All optional except {@code tableName}; other fields default
+     * to sensible values (broadcast=true, format="ndjson", no explicit
+     * typeJson so induction runs).
+     */
+    record RegisterAsTable(String tableName, String typeJson,
+                           Boolean broadcast, String partitionKey) {
+        /** True when the sink should broadcast (default) — treats null as true. */
+        public boolean broadcastOrDefault() {
+            return broadcast == null || broadcast;
+        }
+    }
 
     /** CSV file with header. */
     record CsvFile(String url, java.util.List<String> cols) implements SinkSpec { }
