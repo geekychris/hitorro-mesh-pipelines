@@ -15,6 +15,49 @@ import static org.assertj.core.api.Assertions.*;
 class JobSpecYamlTest {
 
     @Test
+    void luceneSink_omittingStoreSource_defaultsTrue() throws Exception {
+        // Regression against the "empty hits" gotcha — the default when
+        // storeSource is not in the YAML must be true so search-back
+        // returns content, not {}. Jackson's @JsonCreator on
+        // SinkSpec.Lucene enforces this. Same for JvsLucene.
+        String yaml = """
+                job: t
+                nodes:
+                  - id: n
+                    pipeline:
+                      source: {kind: inline, rows: []}
+                      sinks:
+                        - {kind: lucene, name: idx}
+                        - {kind: jvs-lucene, name: jidx, typeJsonResource: "classpath:/x.json"}
+                """;
+        JobSpec spec = JobSpecYaml.parse(yaml);
+        var sinks = spec.nodes().get(0).pipeline().sinks();
+        var lucene   = (SinkSpec.Lucene)    sinks.get(0);
+        var jvsLucene = (SinkSpec.JvsLucene) sinks.get(1);
+        assertThat(lucene.storeSource()).isTrue();
+        assertThat(jvsLucene.storeSource()).isTrue();
+    }
+
+    @Test
+    void luceneSink_explicitStoreSourceFalse_isRespected() throws Exception {
+        // Users who explicitly opt into the smaller/no-content mode
+        // must still get it — the default-true change is additive,
+        // not a policy override.
+        String yaml = """
+                job: t
+                nodes:
+                  - id: n
+                    pipeline:
+                      source: {kind: inline, rows: []}
+                      sinks:
+                        - {kind: lucene, name: idx, storeSource: false}
+                """;
+        var lucene = (SinkSpec.Lucene) JobSpecYaml.parse(yaml)
+                .nodes().get(0).pipeline().sinks().get(0);
+        assertThat(lucene.storeSource()).isFalse();
+    }
+
+    @Test
     void parses_example_yaml_with_all_source_step_sink_kinds() throws Exception {
         JobSpec spec = JobSpecYaml.parseFile(Path.of("src/test/resources/example-job.yaml"));
 

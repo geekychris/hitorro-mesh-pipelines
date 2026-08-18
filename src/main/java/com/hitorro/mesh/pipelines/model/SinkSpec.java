@@ -76,11 +76,29 @@ public sealed interface SinkSpec {
     }
 
     /**
-     * Lucene index. {@code storeSource} toggles _source retention.
-     * Stub in Phase 1; concrete adapter in
-     * {@code hitorro-mesh-pipelines-lucene}.
+     * Lucene index. {@code storeSource} toggles retention of the
+     * full row JSON in a {@code _source} field — DEFAULTS TO TRUE
+     * when unset, so search-back returns real content, not empty
+     * hits (which the previous default-false behaviour silently
+     * produced when the sink was declared without the flag). Set
+     * explicitly to {@code false} to save index space when you'll
+     * retrieve content via a paired kvstore lookup instead.
+     * Concrete adapter in {@code hitorro-mesh-pipelines-lucene}.
      */
-    record Lucene(String name, boolean storeSource) implements SinkSpec { }
+    record Lucene(String name, boolean storeSource) implements SinkSpec {
+        /**
+         * Jackson factory — {@code storeSource} defaults to true when
+         * omitted from JSON/YAML. The canonical constructor above is
+         * still callable directly (Java code passing {@code false}
+         * still works).
+         */
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public static Lucene fromJson(
+                @com.fasterxml.jackson.annotation.JsonProperty("name") String name,
+                @com.fasterxml.jackson.annotation.JsonProperty("storeSource") Boolean storeSource) {
+            return new Lucene(name, storeSource == null || storeSource);
+        }
+    }
 
     /**
      * Type-aware Lucene index driven by the JVS type system. Each row is
@@ -96,7 +114,17 @@ public sealed interface SinkSpec {
      * {@code hitorro-mesh-pipelines-jvstype}; drop that jar on the
      * classpath to enable this sink kind.</p>
      */
-    record JvsLucene(String name, String typeJsonResource, boolean storeSource) implements SinkSpec { }
+    record JvsLucene(String name, String typeJsonResource, boolean storeSource) implements SinkSpec {
+        /** Jackson factory — {@code storeSource} defaults to true (same
+         *  rationale as {@link Lucene}: don't ship empty hits by default). */
+        @com.fasterxml.jackson.annotation.JsonCreator
+        public static JvsLucene fromJson(
+                @com.fasterxml.jackson.annotation.JsonProperty("name") String name,
+                @com.fasterxml.jackson.annotation.JsonProperty("typeJsonResource") String typeJsonResource,
+                @com.fasterxml.jackson.annotation.JsonProperty("storeSource") Boolean storeSource) {
+            return new JvsLucene(name, typeJsonResource, storeSource == null || storeSource);
+        }
+    }
 
     /**
      * NATS core-publish sink. Serialises each row as JSON, publishes to
