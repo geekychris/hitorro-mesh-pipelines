@@ -50,6 +50,17 @@ public final class JobRunner implements AutoCloseable {
         status.state = JobStatus.State.RUNNING;
         try {
             List<List<NodeSpec>> ranks = topoRank(spec.nodes());
+            // Populate deps + rank on every node status BEFORE any node
+            // runs so the UI can render the DAG shape immediately after
+            // POST /mesh/jobs/run returns — pollers otherwise see empty
+            // deps until the first node reaches RUNNING.
+            for (int r = 0; r < ranks.size(); r++) {
+                for (NodeSpec n : ranks.get(r)) {
+                    JobStatus.NodeStatus ns = status.node(n.id());
+                    ns.deps = List.copyOf(n.depends());
+                    ns.rank = r;
+                }
+            }
             NodeRunner runner = new NodeRunner(sinkRegistry);
             for (List<NodeSpec> level : ranks) {
                 if (status.cancelRequested.get()) break;

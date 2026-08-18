@@ -74,6 +74,19 @@ public final class JobStatus {
         /** Agent that ran this node (null when not dispatched, e.g. driver-local). */
         public volatile String assignedAgent;
         public final Map<String, Long> sinkCounts = new LinkedHashMap<>();
+        /**
+         * Upstream node ids this node reads via {@code depends} or via
+         * {@code source: {kind: ref, node: …}}. Populated by JobRunner at
+         * job start (before any node runs) so the UI can render arrows
+         * before rows flow. Empty for root nodes.
+         */
+        public volatile java.util.List<String> deps = java.util.List.of();
+        /**
+         * Topological rank assigned by JobRunner's Kahn sort. Root nodes
+         * are rank 0; each downstream node is {@code 1 + max(rank of deps)}.
+         * The UI uses this to place nodes in columns.
+         */
+        public volatile int rank;
 
         NodeStatus(String id) { this.id = id; }
 
@@ -81,7 +94,8 @@ public final class JobStatus {
             return new NodeStatusSnapshot(id, state.name(), rowsIn, rowsOut,
                     startedAt == null ? null : startedAt.toString(),
                     finishedAt == null ? null : finishedAt.toString(),
-                    error, assignedAgent, new LinkedHashMap<>(sinkCounts));
+                    error, assignedAgent, new LinkedHashMap<>(sinkCounts),
+                    java.util.List.copyOf(deps), rank);
         }
     }
 
@@ -97,5 +111,6 @@ public final class JobStatus {
                                      long rowsIn, long rowsOut,
                                      String startedAt, String finishedAt,
                                      String error, String assignedAgent,
-                                     Map<String, Long> sinkCounts) { }
+                                     Map<String, Long> sinkCounts,
+                                     List<String> deps, int rank) { }
 }
