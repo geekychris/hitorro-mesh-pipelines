@@ -60,7 +60,23 @@ public final class StepFactory {
             case StepSpec.JvsTranslate s -> throw new UnsupportedOperationException(
                     "jvs-translate needs hitorro-mesh-pipelines-jvstype on the classpath");
             case StepSpec.Jvssql    s -> throw new UnsupportedOperationException(
-                    "jvssql is Phase 2 (add the jvssql adapter)");
+                    // Step contract is 1:1 (Function<JsonNode, JsonNode>). Bulk
+                    // SQL over a whole node's stream doesn't fit — GROUP BY /
+                    // aggregates need a materialise-then-project pass which
+                    // reduce already provides. Pointing users at the shipped
+                    // alternatives is more useful than a half-baked per-row
+                    // SELECT+WHERE eval that duplicates filter+project.
+                    "jvssql step is not yet supported — pick the tool that matches your intent:\n"
+                    + "  · per-row expression → use `groovy-map` (any Groovy) or `jvs-groovy`\n"
+                    + "    (full JVS DSL via hitorro-mesh-pipelines-jvstype)\n"
+                    + "  · per-row filter / project → use `filter`, `project`,\n"
+                    + "    `set-field`, `rename` (all built-in, zero deps)\n"
+                    + "  · GROUP BY / aggregates → use `reduce` (count/sum/avg/min/max/\n"
+                    + "    distinct/first/last/collect) at the node level\n"
+                    + "  · external SQL over a mesh table → use `source: {kind: sql, ...}`\n"
+                    + "    on the upstream node (runs through the mesh SQL engine)\n"
+                    + "A bulk step-shaped SQL adapter would need a NodeRunner API extension;\n"
+                    + "not planned until a concrete use case emerges.");
         };
     }
 
