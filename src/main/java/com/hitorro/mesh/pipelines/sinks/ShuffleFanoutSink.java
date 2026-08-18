@@ -92,7 +92,18 @@ public final class ShuffleFanoutSink extends JsonNodeSinkBase {
         conn = null;
     }
 
-    private int pickBucket(JsonNode row) {
+    /**
+     * Package-private for {@code ShuffleFanoutHashTest}.
+     * Deterministic hash-partitioning on a dotted-path key:
+     *   bucket = |hashCode(key.asText or "<null>")| mod buckets
+     * Same key always maps to same bucket — critical invariant for
+     * the reducer to see all rows of a group together.
+     */
+    int pickBucket(JsonNode row) {
+        return pickBucket(row, keyExpr, buckets);
+    }
+
+    static int pickBucket(JsonNode row, String keyExpr, int buckets) {
         JsonNode v = pluck(row, keyExpr);
         String key = (v == null || v.isNull()) ? "<null>" : v.asText();
         int h = key.hashCode();

@@ -196,11 +196,20 @@ public final class PipelineScheduler implements AutoCloseable {
      *   sinks:  (original)
      * </pre>
      *
-     * <p>Rewrites: COUNT → SUM of partial counts. SUM/MIN/MAX stay
-     * associative. AVG needs SUM+COUNT decomposition (not implemented;
-     * mapper emits raw and reducer averages) — for now AVG only works
-     * when shuffle is off. FIRST/LAST/COLLECT/DISTINCT_COUNT are
-     * left as-is (best-effort at reducer).</p>
+     * <p>Row semantics: mappers publish RAW rows to the shuffle
+     * subjects (via {@link SinkSpec.ShuffleFanout}) — no mapper-side
+     * pre-aggregation. Reducers receive every raw row hashed into
+     * their bucket and run the ORIGINAL aggs unchanged. This keeps
+     * every AggKind — including AVG, DISTINCT_COUNT, FIRST/LAST,
+     * COLLECT — semantically identical to the single-agent path,
+     * at the cost of higher network traffic than a two-phase
+     * pre-agg + combine would need.</p>
+     *
+     * <p>The {@link #rewriteForShuffle} step exists as a hook for a
+     * future two-phase decomposition (mapper: partial SUM+COUNT →
+     * reducer: divide) — today it only disables further shuffling
+     * on the reducer's own reduce (shuffle=false, buckets=1) so we
+     * don't recursively split.</p>
      */
     private void dispatchShuffleReduce(NodeSpec original, List<String> targetAgents,
                                        JobStatus status,
@@ -296,12 +305,15 @@ public final class PipelineScheduler implements AutoCloseable {
     }
 
     /**
-     * Rewrite mapper aggs → reducer aggs. Since we shuffle raw rows (no
-     * mapper-side pre-aggregation), the reducer runs the original aggs
-     * on the shuffled rows. This keeps correctness for every AggKind
-     * — including AVG — at the cost of higher network traffic.
-     * Optimising with mapper-side partials (COUNT → local COUNT →
-     * SUM at reducer) is a future refinement.
+     * Prepare the reducer's ReduceSpec. Aggs are unchanged (the reducer
+     * sees raw rows), but shuffle is turned OFF and buckets forced to 1
+     * so a downstream {@link #dispatchShuffleReduce} doesn't recursively
+     * split the reducer's own reduce.
+     *
+     * <p>Landing spot for a future two-phase decomposition: rewrite each
+     * AVG here into (SUM, COUNT) with a paired sum/count agg at the
+     * reducer, then divide in a post-step. Until that lands, this is a
+     * one-line pass-through that just disables the shuffle flag.</p>
      */
     private ReduceSpec rewriteForShuffle(ReduceSpec r) {
         return new ReduceSpec(r.groupBy(), r.aggs(), false, 1);
