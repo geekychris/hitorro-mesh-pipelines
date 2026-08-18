@@ -168,6 +168,42 @@ class JobRegistryTest {
                 .containsExactly("job-5", "job-4", "job-3");
     }
 
+    // -------------------------------------------------- restartable-store wiring
+
+    @Test
+    void registerRestartable_persists_thenOnTerminalRemoves(@TempDir Path tmp) throws Exception {
+        RestartableJobStore store = new RestartableJobStore(tmp.resolve("r.json"));
+        JobRegistry r = new JobRegistry(10, null, store);
+
+        String yaml = """
+                job: streaming
+                restartable: true
+                nodes:
+                  - id: n
+                    pipeline: {source: {kind: inline, rows: []}, sinks: []}
+                """;
+        var spec = com.hitorro.mesh.pipelines.parse.JobSpecYaml.parse(yaml);
+        r.registerRestartable("job-42", spec, yaml, "yaml");
+        assertThat(store.size()).isEqualTo(1);
+
+        // Simulate the job terminating — must be removed from the
+        // restart set so the next driver boot doesn't resurrect it.
+        JobStatus done = new JobStatus("job-42", "streaming");
+        done.state = JobStatus.State.SUCCEEDED;
+        r.onTerminal(done);
+        assertThat(store.size()).isEqualTo(0);
+    }
+
+    @Test
+    void onTerminal_nullRestartableStore_isSafeNoOp() {
+        // Registry constructed without a restartable store must not
+        // NPE on terminal callback.
+        JobRegistry r = new JobRegistry(10);
+        JobStatus s = new JobStatus("job-1", "spec");
+        s.state = JobStatus.State.SUCCEEDED;
+        r.onTerminal(s);   // must not throw
+    }
+
     @Test
     void construct_replay_survivesUnrecognisedStateLabel(@TempDir Path tmp) {
         // A future driver ships a new State enum value (say, PAUSED);

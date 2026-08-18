@@ -24,16 +24,27 @@ public final class JobRegistry {
 
     private final int capacity;
     private final JobHistoryStore history;
+    private final RestartableJobStore restartable;
     private final ConcurrentMap<String, JobStatus> byId = new ConcurrentHashMap<>();
     private final List<String> order = Collections.synchronizedList(new ArrayList<>());
 
     public JobRegistry(int capacity) {
-        this(capacity, null);
+        this(capacity, null, null);
     }
 
     public JobRegistry(int capacity, JobHistoryStore history) {
+        this(capacity, history, null);
+    }
+
+    /**
+     * Full constructor — attaches BOTH a job history log (recent runs
+     * for the UI) AND a restartable-jobs store (persistent registration
+     * of long-running streaming jobs so they resume after driver restart).
+     */
+    public JobRegistry(int capacity, JobHistoryStore history, RestartableJobStore restartable) {
         this.capacity = capacity;
         this.history = history;
+        this.restartable = restartable;
         if (history != null) replay();
     }
 
@@ -72,13 +83,32 @@ public final class JobRegistry {
         return s;
     }
 
-    /** Called by the runner when a job hits a terminal state — persists to disk. */
+    /** Called by the runner when a job hits a terminal state — persists to
+     *  disk. Also removes the job from the restartable store (if
+     *  registered): a terminal run should NOT be resumed on next boot. */
     public void onTerminal(JobStatus s) {
         if (history != null && s.state != JobStatus.State.RUNNING
                             && s.state != JobStatus.State.PENDING) {
             history.append(s);
         }
+        if (restartable != null && s.state != JobStatus.State.RUNNING
+                                && s.state != JobStatus.State.PENDING) {
+            restartable.remove(s.jobId);
+        }
     }
+
+    /**
+     * Register a job for restart before it starts running. Called by
+     * the REST controller (or any submit path) when the spec has
+     * {@code restartable=true}. No-op if no store is attached.
+     */
+    public void registerRestartable(String jobId, com.hitorro.mesh.pipelines.model.JobSpec spec,
+                                    String specText, String specKind) {
+        if (restartable != null) restartable.record(jobId, spec, specText, specKind);
+    }
+
+    /** Store handle for the boot-time resume flow. Nullable. */
+    public RestartableJobStore restartableStore() { return restartable; }
 
     public JobStatus get(String jobId) { return byId.get(jobId); }
 

@@ -51,7 +51,7 @@ public class PipelinesController {
             MediaType.APPLICATION_JSON_VALUE, MediaType.TEXT_PLAIN_VALUE, "*/*"})
     public ResponseEntity<Map<String, String>> runInline(@RequestBody String body) throws Exception {
         JobSpec spec = JobSpecYaml.parse(body);
-        return acceptAndRun(spec);
+        return acceptAndRun(spec, body, "yaml");
     }
 
     @PostMapping("/run/bundled/{name}")
@@ -77,7 +77,7 @@ public class PipelinesController {
                     MediaType.TEXT_PLAIN_VALUE, "*/*"})
     public ResponseEntity<Map<String, String>> runGroovy(@RequestBody String body) {
         JobSpec spec = com.hitorro.mesh.pipelines.parse.JobSpecGroovy.parse(body);
-        return acceptAndRun(spec);
+        return acceptAndRun(spec, body, "groovy");
     }
 
     /**
@@ -183,13 +183,30 @@ public class PipelinesController {
         return ResponseEntity.ok(Map.of("jobId", jobId, "cancelRequested", "true"));
     }
 
+    /** Original 1-arg form for bundled jobs where we don't have the raw
+     *  body text at hand (loaded from classpath). Non-restartable path. */
     private ResponseEntity<Map<String, String>> acceptAndRun(JobSpec spec) {
+        return acceptAndRun(spec, null, null);
+    }
+
+    /**
+     * @param specText  raw request body — persisted verbatim for restartable
+     *                  jobs so the boot resumer re-parses the same text
+     * @param specKind  {@code "yaml"} / {@code "json"} / {@code "groovy"} —
+     *                  tells the resumer which parser to invoke
+     */
+    private ResponseEntity<Map<String, String>> acceptAndRun(JobSpec spec, String specText, String specKind) {
         // Live status object — the runner mutates this directly so pollers
         // see progress in real time. Critical for streaming jobs whose
         // run() never returns.
         String jobId = "job-" + System.nanoTime();
         JobStatus live = new JobStatus(jobId, spec.id());
         registry.register(live);
+        // Restartable jobs get persisted BEFORE the pool.submit so a
+        // crash between register + submit is still recoverable.
+        if (spec.restartable() && specText != null) {
+            registry.registerRestartable(jobId, spec, specText, specKind);
+        }
         pool.submit(() -> {
             try { runner.run(spec, live); }
             finally { registry.onTerminal(live); }

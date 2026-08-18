@@ -236,6 +236,57 @@ class PipelinesControllerTest {
         assertThat(r2.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
 
+    // -------------------------------------------------- restartable
+
+    @Test
+    void run_restartableJob_persistsToStore_removedOnTerminal() throws Exception {
+        // Use the class-level `home` (single @TempDir) so async pool writes
+        // during `finally { onTerminal }` don't race with method-level
+        // TempDir cleanup — hit exactly that race with a parameter-injected
+        // @TempDir here.
+        Path storeFile = home.resolve("r-persists.json");
+        var store = new com.hitorro.mesh.pipelines.runtime.RestartableJobStore(storeFile);
+        JobRegistry withStore = new JobRegistry(10, null, store);
+        PipelinesController c = new PipelinesController(runner, withStore);
+
+        String yaml = """
+                job: streamer
+                restartable: true
+                nodes:
+                  - id: n
+                    pipeline:
+                      source: {kind: inline, rows: [{n: 1}]}
+                      sinks: [{kind: counting, label: c}]
+                """;
+        String jobId = c.runInline(yaml).getBody().get("jobId");
+
+        // Immediately after acceptAndRun, the store must have the entry
+        // (registration happens BEFORE the async submit so a crash between
+        // register + submit is still recoverable).
+        assertThat(store.size()).isGreaterThanOrEqualTo(1);
+
+        // After the job finishes, JobRegistry.onTerminal fires → entry
+        // removed. Poll the store instead of just the state so we allow
+        // the pool worker to reach `finally { onTerminal }`.
+        waitForTerminal(jobId, 5_000, withStore);
+        long deadline = System.currentTimeMillis() + 2_000;
+        while (store.size() > 0 && System.currentTimeMillis() < deadline) Thread.sleep(20);
+        assertThat(store.size()).isEqualTo(0);
+    }
+
+    @Test
+    void run_batchJob_neverPersistedToRestartableStore() throws Exception {
+        Path storeFile = home.resolve("r-batch.json");
+        var store = new com.hitorro.mesh.pipelines.runtime.RestartableJobStore(storeFile);
+        JobRegistry withStore = new JobRegistry(10, null, store);
+        PipelinesController c = new PipelinesController(runner, withStore);
+
+        String yaml = tinySpec("batch");   // restartable defaults false
+        String jobId = c.runInline(yaml).getBody().get("jobId");
+        waitForTerminal(jobId, 5_000, withStore);
+        assertThat(store.size()).isEqualTo(0);
+    }
+
     // -------------------------------------------------- history
 
     @Test
