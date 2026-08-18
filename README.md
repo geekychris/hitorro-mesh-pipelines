@@ -5,9 +5,12 @@ A job is a directed graph of nodes; each node is internally a pipeline
 (source → steps → optional reduce → one-or-more sinks); edges materialise
 as files, key-value stores, indices, or streaming queues.
 
-Phase 1 executes the whole DAG on the driver JVM, reusing Jackson + Java
-standard library. Phases 2–4 add mesh distribution, streaming edges, and
-long-running jobs.
+Phase 1 (driver-local) and Phase 2 (mesh distribution) are both landed —
+`PipelineScheduler` fans nodes across agents that advertise the
+`pipeline-node` capability via `hitorro-mesh-agent-pipelines`, and the
+`-kvstore` / `-lucene` / `-jvstype` adapter modules ship real backends
+via ServiceLoader. Phase 3 (streaming edges) and Phase 4 (backpressure /
+exactly-once) are the remaining follow-ups.
 
 ## Quick example
 
@@ -67,18 +70,27 @@ nodes reading `source: {kind: ref, node: <id>}` work with zero extra config.
 
 ## Runtime, phased
 
-- **Phase 1 (this release).** Driver-local execution: topological sort +
-  per-rank parallelism. All sinks fully implemented as file/in-memory
-  stubs. KV / Lucene write stubs (TSV / NDJSON respectively) so tests
-  assert the physical output shape end-to-end.
-- **Phase 2.** Concrete adapter modules land real `RocksDBStore` and
-  `JVSLuceneIndexWriter` writers behind the same `SinkSpec` names.
-  `TaskDescriptor` gets a nullable `pipelineSpec` field and `TaskExecutor`
-  gets a fourth branch — pipelines dispatch to agents by capability.
-- **Phase 3.** NATS / Kafka sinks + sources become streaming edges;
-  watermarks flow through pipeline nodes.
-- **Phase 4.** Sink lifecycle (create / pause / drain / drop),
-  checkpointing via RocksDB WAL, exactly-once sink writes by sequence.
+- **Phase 1 — driver-local execution.** ✅ Shipped. Topological sort +
+  per-rank parallelism via `JobRunner`. Every source/step/sink
+  factory-built from spec through the built-in registry.
+- **Phase 2 — mesh distribution.** ✅ Shipped. `PipelineScheduler`
+  discovers agents that advertise the `pipeline-node` capability
+  (via `hitorro-mesh-agent-pipelines`), dispatches each node over
+  NATS as a `TaskDescriptor.pipelineNodeSpec` envelope, and
+  accumulates results on a per-task subject. Auto-splits any node
+  with `reduce.shuffle=true` into M mappers × K reducers connected
+  via NATS shuffle-bucket subjects — raw-row shuffle so every
+  AggKind (COUNT, SUM, AVG, MIN, MAX, DISTINCT_COUNT, FIRST, LAST,
+  COLLECT) stays correct. Real `RocksDBStore` / `JVSLuceneIndexWriter`
+  writers land through the `-kvstore` / `-lucene` / `-jvstype`
+  adapter modules via `ServiceLoader`. Locality-aware placement
+  co-locates ref-source nodes with their upstream.
+- **Phase 3 — streaming edges.** Partial. NATS + Kafka sources and
+  sinks work today for pub/sub semantics; watermark propagation +
+  long-running named jobs with restart are the remaining pieces.
+- **Phase 4 — backpressure + exactly-once.** Not started. Sink
+  lifecycle (create / pause / drain / drop), checkpointing via
+  RocksDB WAL, idempotent sink writes by sequence.
 
 ## REST surface
 
@@ -87,12 +99,18 @@ autoconfig):
 
 | Method | Path                                  | Purpose                                           |
 |--------|---------------------------------------|---------------------------------------------------|
-| POST   | `/mesh/jobs/run`                      | Body is YAML or JSON job spec, kicks off async.   |
+| POST   | `/mesh/jobs/run`                      | Body is YAML or JSON job spec, kicks off async (driver-local execution). |
+| POST   | `/mesh/jobs/run-distributed`          | Same body, dispatches nodes across agents with the `pipeline-node` capability. |
 | POST   | `/mesh/jobs/run/bundled/{name}`       | Run a bundled example.                            |
 | GET    | `/mesh/jobs`                          | List past + running runs.                         |
-| GET    | `/mesh/jobs/{jobId}`                  | Snapshot for one run.                             |
+| GET    | `/mesh/jobs/{jobId}`                  | Snapshot for one run — includes per-node `deps` + `rank` so the UI can render topology. |
 | GET    | `/mesh/jobs/{jobId}/events`           | Progress events for that run.                     |
 | GET    | `/mesh/jobs/bundled`                  | id → YAML text for every bundled example.         |
+
+The driver-app also ships a Jobs UI tab that renders each running job
+as a topological DAG (columns per Kahn rank, cubic-bezier SVG arrows
+between deps, edge colour tracking upstream state as the wave of
+"done" cascades through the graph).
 
 ## Testing
 
@@ -100,7 +118,13 @@ autoconfig):
 mvn clean install
 ```
 
-Runs the parser + runtime tests including the three-node bundled example.
+Runs the parser + runtime + reduce + hash-routing + DAG-shape suite
+(currently 42 tests across `JobSpecYamlTest`, `JobRunnerLocalTest`,
+`DagShapeTest`, `ReduceEngineTest`, `ShuffleFanoutHashTest`,
+`GroovyMapStepTest`, `SinkRegistryDecoratorTest`, `CsvJsonSinkIntegrationTest`).
+Real KV / Lucene / JVS-DSL round-trip coverage lives in the sibling
+adapter modules (`-kvstore`, `-lucene`, `-jvstype`) plus agent-side
+envelope coverage in `-agent-pipelines`.
 
 ## License
 
