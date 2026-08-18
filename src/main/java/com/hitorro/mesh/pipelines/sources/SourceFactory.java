@@ -71,9 +71,11 @@ public final class SourceFactory {
             case SourceSpec.Nats       s -> openNats(s.servers(), s.subject(), cancelled);
             case SourceSpec.Kafka      s -> openKafka(s.bootstrap(), s.topic(), s.groupId(), cancelled);
             case SourceSpec.KvStore    s -> throw new UnsupportedOperationException(
-                    "kvstore source is Phase 2 (needs the kvstore adapter)");
+                    "kvstore source needs hitorro-mesh-pipelines-kvstore on the classpath "
+                    + "— the RocksDB adapter registers itself via ServiceLoader when present");
             case SourceSpec.Lucene     s -> throw new UnsupportedOperationException(
-                    "lucene source is Phase 2 (needs the lucene adapter)");
+                    "lucene source needs hitorro-mesh-pipelines-lucene on the classpath "
+                    + "— the real Lucene adapter registers itself via ServiceLoader when present");
             case SourceSpec.Sql        s -> openSql(s.sql());
             case SourceSpec.ShuffleBucket s -> openShuffleBucket(
                     s.subjectPrefix(), s.bucket(), s.expectedMappers(), s.natsUrl(), cancelled);
