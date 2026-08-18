@@ -6,6 +6,8 @@ package com.hitorro.mesh.pipelines.sinks;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.hitorro.mesh.pipelines.model.SinkSpec;
 import com.hitorro.util.core.iterator.sinks.CountingSink;
+import com.hitorro.util.core.iterator.sinks.CsvFileSink;
+import com.hitorro.util.core.iterator.sinks.JsonFileSink;
 import com.hitorro.util.core.iterator.sinks.MemoryTableSink;
 import com.hitorro.util.core.iterator.sinks.NdjsonFileSink;
 import com.hitorro.util.core.iterator.sinks.Sink;
@@ -132,10 +134,8 @@ public final class SinkRegistry {
             case SinkSpec.Kafka      s -> createKafka(s);
             case SinkSpec.ShuffleFanout s -> new com.hitorro.mesh.pipelines.sinks.ShuffleFanoutSink(
                     s.subjectPrefix(), s.buckets(), s.keyExpr(), s.mapperId(), s.natsUrl());
-            case SinkSpec.CsvFile    s -> throw new UnsupportedOperationException(
-                    "csv-file sink is Phase 2 (add jackson-csv or the basefile adapter)");
-            case SinkSpec.JsonFile   s -> throw new UnsupportedOperationException(
-                    "json-file sink is Phase 2");
+            case SinkSpec.CsvFile    s -> new CsvFileSink(s.url(), s.cols());
+            case SinkSpec.JsonFile   s -> new JsonFileSink(s.url(), s.pretty());
         };
     }
 
