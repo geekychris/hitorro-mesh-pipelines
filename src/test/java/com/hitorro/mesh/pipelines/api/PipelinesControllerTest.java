@@ -103,6 +103,28 @@ class PipelinesControllerTest {
     // -------------------------------------------------- run/bundled
 
     @Test
+    void runGroovy_acceptsDslScript_executes() throws Exception {
+        String script = """
+                job('gtest') {
+                    node('n') {
+                        source inline: [[x: 1], [x: 2], [x: 3]]
+                        step filter: 'x > 1'
+                        sink counting: 'c'
+                    }
+                }
+                """;
+        ResponseEntity<Map<String, String>> resp = ctrl.runGroovy(script);
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+        String jobId = resp.getBody().get("jobId");
+        waitForTerminal(jobId, 5_000);
+        JobStatus done = registry.get(jobId);
+        assertThat(done.state).isEqualTo(JobStatus.State.SUCCEEDED);
+        // Filter kept 2 rows.
+        assertThat(done.node("n").rowsIn).isEqualTo(3);
+        assertThat(done.node("n").rowsOut).isEqualTo(2);
+    }
+
+    @Test
     void runBundled_loadsAndExecutes() throws Exception {
         // BundledJobs.loadAll returns all shipped examples — pick any
         // one and prove the endpoint runs it. Skip if no bundles are

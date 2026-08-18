@@ -61,6 +61,26 @@ public class PipelinesController {
     }
 
     /**
+     * Accepts a Groovy DSL script (see {@link com.hitorro.mesh.pipelines.parse.JobSpecGroovy}).
+     * Same output as {@code /run} — kicks the job async, returns
+     * {@code {jobId}}. Separate endpoint from {@code /run} because
+     * YAML/JSON and Groovy don't disambiguate cleanly from a bare
+     * request body.
+     *
+     * <p>Content-type is intentionally permissive — Groovy scripts
+     * don't have a settled media type in the wild. Accepts
+     * {@code application/groovy}, {@code text/x-groovy}, or the
+     * plain-text catch-all.</p>
+     */
+    @PostMapping(value = "/run-groovy",
+            consumes = {"application/groovy", "text/x-groovy",
+                    MediaType.TEXT_PLAIN_VALUE, "*/*"})
+    public ResponseEntity<Map<String, String>> runGroovy(@RequestBody String body) {
+        JobSpec spec = com.hitorro.mesh.pipelines.parse.JobSpecGroovy.parse(body);
+        return acceptAndRun(spec);
+    }
+
+    /**
      * Distributed dispatch — hands each node of the spec to a mesh agent
      * that advertises the {@code pipeline-node} capability. Round-robin
      * assignment for now. Requires at least one agent running the
