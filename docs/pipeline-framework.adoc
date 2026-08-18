@@ -371,7 +371,7 @@ sinks:
 | Kind             | Class                                                     | Notes
 | `memory-table`   | `sinks/MemoryTableSink.java` (built-in)                   | In-process buffer; other nodes read via `source: ref`
 | `counting`       | `sinks/CountingSink.java` (built-in)                      | Discards rows, counts them
-| `ndjson-file`    | `sinks/NdjsonFileSink.java` (built-in)                    | One JSON per line; gz by extension
+| `ndjson-file`    | `sinks/NdjsonFileSink.java` (built-in)                    | One JSON per line; gz by extension. Optional `registerAsTable: {tableName, typeJson?, broadcast?, partitionKey?}` block auto-registers the file as a mesh runtime table on sink close (see below).
 | `shuffle-fanout` | `sinks/ShuffleFanoutSink.java` (built-in)                 | Distributed reduce: hash-bucket to NATS subjects
 | `nats`           | `sinks/NatsSink.java` (built-in, optional dep)            | Publish rows to a subject
 | `kafka`          | `sinks/KafkaSinkImpl.java` (built-in, optional dep)       | Publish to a topic
@@ -379,6 +379,37 @@ sinks:
 | `lucene`         | `pipelines-lucene/LuceneIndexSink.java`                   | Generic (schema-less) Lucene writer
 | `jvs-lucene`     | `pipelines-jvstype/JvsLuceneSink.java`                    | Type-aware via `JVSLuceneIndexWriter`
 |===
+
+== Auto-register pipeline output as a mesh table
+
+An `ndjson-file` sink can carry a `registerAsTable` block that
+publishes the file as a queryable mesh runtime table when the sink
+closes — one pipeline run, one file, one immediately-queryable
+table.
+
+[source,yaml]
+----
+sinks:
+  - kind: ndjson-file
+    url: file:/tmp/enriched.ndjson
+    registerAsTable:
+      tableName: enriched
+      broadcast: true         # default; when false, add partitionKey
+      # typeJson: "{…}"       # omit to induce from the sink's first ~10 rows
+----
+
+Wiring: the driver-app registers a
+`SinkRegistry.registerDecorator(...)` at startup that intercepts
+NDJSON sinks with `registerAsTable` set and wraps them. On
+`Sink.close()`, the wrapper calls the same code path as
+`POST /mesh/queries/register-existing` — internal method call, no
+HTTP round-trip. Failure to register is logged but doesn't fail
+the pipeline (the file was written; only the SQL binding lags).
+
+See the mesh user guide's "Runtime table registration" section for
+the full lifecycle (JVS type induction, agent fan-out via
+`RegisterTableMessage`, journal persistence, `SELECT * FROM
+<tableName>` immediately after the pipeline finishes).
 
 == Extending — add a source
 
