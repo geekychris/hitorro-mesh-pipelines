@@ -114,8 +114,18 @@ public final class JobSpecGroovy {
     public static final class JobBuilder {
         private final String name;
         private final List<NodeSpec> nodes = new ArrayList<>();
+        private boolean restartable = false;
 
         JobBuilder(String name) { this.name = name; }
+
+        /**
+         * {@code restartable true} at job scope marks the whole job as
+         * restartable — driver persists the spec on start, resumes on
+         * boot. See {@link com.hitorro.mesh.pipelines.model.JobSpec#restartable()}
+         * for the safety caveats (rows re-process on resume; only
+         * idempotent sinks stay clean).
+         */
+        public void restartable(boolean v) { this.restartable = v; }
 
         /** {@code node('id') { … }} — no dependencies. */
         public void node(String id, Closure<?> body) {
@@ -140,7 +150,7 @@ public final class JobSpecGroovy {
             nodes.add(nb.build());
         }
 
-        JobSpec build() { return new JobSpec(name, "1", nodes); }
+        JobSpec build() { return new JobSpec(name, "1", nodes, restartable); }
     }
 
     // ================================================== Node builder

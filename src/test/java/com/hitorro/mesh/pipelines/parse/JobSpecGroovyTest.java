@@ -278,6 +278,35 @@ class JobSpecGroovyTest {
         assertThat(sinks.get(4)).isInstanceOf(SinkSpec.JvsLucene.class);
     }
 
+    // -------------------------------------------------- restartable
+
+    @Test
+    void restartable_defaultsFalse() {
+        JobSpec spec = JobSpecGroovy.parse("""
+                job('batch') {
+                    node('n') {
+                        source inline: [[a: 1]]
+                        sink counting: 'c'
+                    }
+                }
+                """);
+        assertThat(spec.restartable()).isFalse();
+    }
+
+    @Test
+    void restartable_explicitTrue_atJobScope() {
+        JobSpec spec = JobSpecGroovy.parse("""
+                job('streamer') {
+                    restartable true
+                    node('n') {
+                        source nats: 'ingest.evt'
+                        sink counting: 'c'
+                    }
+                }
+                """);
+        assertThat(spec.restartable()).isTrue();
+    }
+
     // -------------------------------------------------- error paths
 
     @Test
