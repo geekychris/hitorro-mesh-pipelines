@@ -83,6 +83,36 @@ class PipelinesBootResumerTest {
     }
 
     @Test
+    void resumedJob_snapshotFlagsRestartableTrue(@TempDir Path home) throws Exception {
+        // JobRunner.run() writes spec.restartable() onto the status so
+        // pollers (UI badge) can see it. Verify via the snapshot record.
+        Path storeFile = home.resolve("r.json");
+        RestartableJobStore store = new RestartableJobStore(storeFile);
+        store.record("job-flag-1", JobSpecYaml.parse(RESTARTABLE_YAML),
+                     RESTARTABLE_YAML, "yaml");
+
+        SinkRegistry sinks = new SinkRegistry(home);
+        try (JobRunner runner = new JobRunner(sinks)) {
+            JobRegistry registry = new JobRegistry(10, null, store);
+            new PipelinesAutoConfiguration.PipelinesBootResumer(runner, registry, store)
+                    .afterPropertiesSet();
+
+            long deadline = System.currentTimeMillis() + 5_000;
+            JobStatus s;
+            while ((s = registry.get("job-flag-1")) == null
+                    && System.currentTimeMillis() < deadline) Thread.sleep(20);
+            assertThat(s).isNotNull();
+            deadline = System.currentTimeMillis() + 5_000;
+            while (s.state != JobStatus.State.SUCCEEDED
+                    && System.currentTimeMillis() < deadline) Thread.sleep(20);
+
+            var snap = s.snapshot();
+            assertThat(snap.restartable()).isTrue();
+            assertThat(snap.jobId()).isEqualTo("job-flag-1");
+        }
+    }
+
+    @Test
     void bootResumer_noPendingJobs_isNoOp(@TempDir Path home) {
         RestartableJobStore store = new RestartableJobStore(home.resolve("r.json"));
         try (JobRunner runner = new JobRunner(new SinkRegistry(home))) {

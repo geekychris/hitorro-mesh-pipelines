@@ -48,6 +48,7 @@ public final class JobRunner implements AutoCloseable {
      */
     public JobStatus run(JobSpec spec, JobStatus status) {
         status.state = JobStatus.State.RUNNING;
+        status.restartable = spec.restartable();
         try {
             List<List<NodeSpec>> ranks = topoRank(spec.nodes());
             // Populate deps + rank on every node status BEFORE any node

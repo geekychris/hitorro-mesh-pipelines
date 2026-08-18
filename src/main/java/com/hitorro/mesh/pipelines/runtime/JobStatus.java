@@ -24,6 +24,14 @@ public final class JobStatus {
     public volatile Instant finishedAt;
     public volatile State state = State.PENDING;
     public volatile String error;
+    /**
+     * True when the job spec was submitted with {@code restartable: true}.
+     * Set by JobRunner (or the resumer) when it starts running the spec.
+     * Purely informational — the persistence + resume flow works off the
+     * {@code RestartableJobStore}; this flag just exposes it to pollers
+     * so the UI can badge the row.
+     */
+    public volatile boolean restartable;
 
     /**
      * Cooperative cancel flag. NodeRunner polls between each row and stops
@@ -59,7 +67,8 @@ public final class JobStatus {
                 startedAt.toString(),
                 finishedAt == null ? null : finishedAt.toString(),
                 error,
-                nodes.values().stream().map(NodeStatus::snapshot).toList());
+                nodes.values().stream().map(NodeStatus::snapshot).toList(),
+                restartable);
     }
 
     // ---------------------------------------------------------- Node status
@@ -105,7 +114,14 @@ public final class JobStatus {
     // ---------------------------------------------------------- Snapshots
     public record Snapshot(String jobId, String jobSpecName, String state,
                            String startedAt, String finishedAt, String error,
-                           List<NodeStatusSnapshot> nodes) { }
+                           List<NodeStatusSnapshot> nodes, boolean restartable) {
+        /** Back-compat 7-arg constructor — restartable defaults to false. */
+        public Snapshot(String jobId, String jobSpecName, String state,
+                        String startedAt, String finishedAt, String error,
+                        List<NodeStatusSnapshot> nodes) {
+            this(jobId, jobSpecName, state, startedAt, finishedAt, error, nodes, false);
+        }
+    }
 
     public record NodeStatusSnapshot(String id, String state,
                                      long rowsIn, long rowsOut,
