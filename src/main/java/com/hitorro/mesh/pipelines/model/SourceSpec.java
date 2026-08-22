@@ -23,6 +23,7 @@ import java.util.List;
     @JsonSubTypes.Type(value = SourceSpec.KvStore.class,    name = "kvstore"),
     @JsonSubTypes.Type(value = SourceSpec.Lucene.class,     name = "lucene"),
     @JsonSubTypes.Type(value = SourceSpec.Sql.class,        name = "sql"),
+    @JsonSubTypes.Type(value = SourceSpec.Sqlite.class,     name = "sqlite"),
     @JsonSubTypes.Type(value = SourceSpec.Nats.class,       name = "nats"),
     @JsonSubTypes.Type(value = SourceSpec.Kafka.class,      name = "kafka"),
     @JsonSubTypes.Type(value = SourceSpec.ShuffleBucket.class,name = "_shuffle-bucket"),
@@ -61,6 +62,39 @@ public sealed interface SourceSpec {
      * through the shipped SQL client; Phase 2 dispatches to mesh agents.
      */
     record Sql(String sql) implements SourceSpec { }
+
+    /**
+     * Read-only SQLite database source. Runs the given {@code query}
+     * against {@code path} and emits one row per result — every column
+     * becomes a JSON key, types coerce naturally (INTEGER/REAL → JSON
+     * number, TEXT → string, BLOB → base64 string, NULL → JSON null).
+     *
+     * <p>{@code path} accepts {@code ~/} for home-dir expansion. The
+     * adapter opens the DB with {@code mode=ro} so nothing the pipeline
+     * runs can mutate the source file. Optional {@code params} bind to
+     * positional {@code ?} placeholders in the query, in list order.</p>
+     *
+     * <p>Requires {@code hitorro-mesh-pipelines-sqlite} on the classpath.
+     * Sources of this kind execute driver-local only —
+     * {@code PipelineScheduler} rejects them on the {@code /run-distributed}
+     * path because the DB file is local to the driver host, not on
+     * remote agents.</p>
+     */
+    record Sqlite(String path, String query, java.util.List<Object> params) implements SourceSpec {
+        /** Back-compat 2-arg constructor — no bound params. */
+        public Sqlite(String path, String query) { this(path, query, java.util.List.of()); }
+
+        /** Defensive-copy params on construction so callers can't mutate.
+         *  {@code Collections.unmodifiableList(new ArrayList<>(...))}
+         *  rather than {@code List.copyOf} because the latter rejects
+         *  null elements — but SQL {@code ?} params can legitimately
+         *  bind to NULL. */
+        public Sqlite {
+            params = params == null
+                    ? java.util.List.of()
+                    : java.util.Collections.unmodifiableList(new java.util.ArrayList<>(params));
+        }
+    }
 
     /**
      * NATS subject subscription. Emits one row per received message; the

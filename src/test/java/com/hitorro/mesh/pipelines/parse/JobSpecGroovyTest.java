@@ -105,6 +105,31 @@ class JobSpecGroovyTest {
     }
 
     @Test
+    void source_sqlite_withOrWithoutParams() {
+        JobSpec spec = JobSpecGroovy.parse("""
+                job('t') {
+                    node('a') {
+                        source sqlite: '/tmp/x.db', query: 'SELECT 1'
+                        sink counting: 'c'
+                    }
+                    node('b') {
+                        source sqlite: '/tmp/x.db',
+                               query: 'SELECT * FROM t WHERE id > ?',
+                               params: [42]
+                        sink counting: 'c'
+                    }
+                }
+                """);
+        var a = (SourceSpec.Sqlite) spec.nodes().get(0).pipeline().source();
+        assertThat(a.path()).isEqualTo("/tmp/x.db");
+        assertThat(a.query()).isEqualTo("SELECT 1");
+        assertThat(a.params()).isEmpty();
+
+        var b = (SourceSpec.Sqlite) spec.nodes().get(1).pipeline().source();
+        assertThat(b.params()).containsExactly(42);
+    }
+
+    @Test
     void source_kvstore_lucene_sql_nats_kafka() {
         JobSpec spec = JobSpecGroovy.parse("""
                 job('t') {

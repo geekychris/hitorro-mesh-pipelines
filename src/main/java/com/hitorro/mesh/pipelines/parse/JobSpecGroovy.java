@@ -205,6 +205,10 @@ public final class JobSpecGroovy {
             if (has(args, "lucene"))    return new SourceSpec.Lucene(str(args, "lucene"),
                     strOrNull(args, "query"));
             if (has(args, "sql"))       return new SourceSpec.Sql(str(args, "sql"));
+            if (has(args, "sqlite"))    return new SourceSpec.Sqlite(
+                    str(args, "sqlite"),
+                    strOrDefault(args, "query", "SELECT 1"),
+                    (List<Object>) args.getOrDefault("params", List.of()));
             if (has(args, "nats"))      return new SourceSpec.Nats(str(args, "nats"),
                     strOrDefault(args, "servers", "nats://localhost:4222"));
             if (has(args, "kafka"))     return new SourceSpec.Kafka(
@@ -212,7 +216,7 @@ public final class JobSpecGroovy {
                     str(args, "kafka"),
                     strOrNull(args, "groupId"));
             throw dslError("source", args,
-                    "inline | ndjson | json | csv | ref | kvstore | lucene | sql | nats | kafka");
+                    "inline | ndjson | json | csv | ref | kvstore | lucene | sql | sqlite | nats | kafka");
         }
 
         // ---------- step

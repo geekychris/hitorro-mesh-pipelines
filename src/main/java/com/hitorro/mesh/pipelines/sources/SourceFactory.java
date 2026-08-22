@@ -77,6 +77,9 @@ public final class SourceFactory {
                     "lucene source needs hitorro-mesh-pipelines-lucene on the classpath "
                     + "— the real Lucene adapter registers itself via ServiceLoader when present");
             case SourceSpec.Sql        s -> openSql(s.sql());
+            case SourceSpec.Sqlite     s -> throw new UnsupportedOperationException(
+                    "sqlite source needs hitorro-mesh-pipelines-sqlite on the classpath "
+                    + "— the sqlite-jdbc adapter registers itself via ServiceLoader when present");
             case SourceSpec.ShuffleBucket s -> openShuffleBucket(
                     s.subjectPrefix(), s.bucket(), s.expectedMappers(), s.natsUrl(), cancelled);
         };

@@ -113,6 +113,22 @@ public final class PipelineScheduler implements AutoCloseable {
             // Track per-node placement so downstream ref-source nodes can
             // co-locate with their upstream, and record persistent-sink
             // writes into the registry so future jobs benefit too.
+            // Reject upfront any node whose source is inherently local
+            // to the driver host — dispatching it to a remote agent
+            // would fail with "no such file" mid-run, which is a bad
+            // failure mode. Better to fast-fail at scheduling time.
+            for (NodeSpec node : spec.nodes()) {
+                if (node.pipeline().source() instanceof SourceSpec.Sqlite s) {
+                    throw new IllegalArgumentException(
+                            "node '" + node.id() + "' has a sqlite source (path=" + s.path()
+                            + ") which cannot be dispatched to remote agents — the DB file "
+                            + "lives on the driver host, not on the target agent. Run this job "
+                            + "via /mesh/jobs/run (driver-local) instead of /run-distributed, "
+                            + "or split the sqlite scan into a separate driver-local job that "
+                            + "materialises to a shared sink (kvstore / lucene / ndjson).");
+                }
+            }
+
             java.util.Map<String, String> nodeToAgent = new java.util.HashMap<>();
             for (NodeSpec node : spec.nodes()) {
                 if (status.cancelRequested.get()) break;
