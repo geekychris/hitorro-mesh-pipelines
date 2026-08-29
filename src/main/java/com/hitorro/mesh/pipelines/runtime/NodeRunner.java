@@ -10,6 +10,7 @@ import com.hitorro.mesh.pipelines.model.StepSpec;
 import com.hitorro.mesh.pipelines.sinks.LabeledCountingSink;
 import com.hitorro.mesh.pipelines.sinks.SinkRegistry;
 import com.hitorro.mesh.pipelines.sources.SourceFactory;
+import com.hitorro.util.core.iterator.ParIterator;
 import com.hitorro.util.core.iterator.sinks.MemoryTableSink;
 import com.hitorro.util.core.iterator.sinks.Sink;
 
@@ -17,6 +18,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.function.Function;
 
 /**
@@ -69,9 +71,27 @@ public final class NodeRunner {
             Iterator<JsonNode> rawSource = sourceFactory.open(p.source(), status.cancelRequested);
             Iterator<JsonNode> raw = wrap(rawSource, rowsInHolder);
 
-            List<Function<JsonNode, JsonNode>> compiledSteps = p.steps().stream()
-                    .map(s -> StepFactory.compile(s, sinkRegistry)).toList();
-            Iterator<JsonNode> stream = StepFactory.chain(raw, compiledSteps);
+            // Chain steps one at a time so we can insert a parallel
+            // (Farm-backed) stage when a step opts in via its own spec —
+            // today that's JvsEnrich.parallelism>1. Every other step is
+            // wrapped with a null-drop iterator identical to the shape
+            // StepFactory.chain used to produce.
+            Iterator<JsonNode> stream = raw;
+            for (int i = 0; i < p.steps().size(); i++) {
+                StepSpec spec = p.steps().get(i);
+                Function<JsonNode, JsonNode> fn = StepFactory.compile(spec, sinkRegistry);
+                int parallelism = parallelismOf(spec);
+                if (parallelism > 1) {
+                    // Bounded queues (4x parallelism each side) keep memory
+                    // usage predictable — the pool won't get ahead of the
+                    // sink by more than one queue-length in either direction.
+                    int qSize = Math.max(8, parallelism * 4);
+                    stream = new ParIterator<>(stream, fn, parallelism, qSize, qSize,
+                            node.id() + "-step" + i + "-par");
+                } else {
+                    stream = nullDropChain(stream, fn);
+                }
+            }
 
             if (p.reduce() != null) {
                 // Reduce buffers, folds, re-emits; rows-in is source count.
@@ -168,6 +188,36 @@ public final class NodeRunner {
             @Override public boolean hasNext() { return it.hasNext(); }
             @Override public JsonNode next() { counter[0]++; return it.next(); }
         };
+    }
+
+    /** Sequential single-step pipe with the same null-drop semantics
+     *  {@link StepFactory#chain} used to give. Kept local so the parallel
+     *  branch in the main loop reads symmetrically. */
+    private static Iterator<JsonNode> nullDropChain(Iterator<JsonNode> upstream,
+                                                    Function<JsonNode, JsonNode> fn) {
+        return new Iterator<>() {
+            JsonNode next;
+            @Override public boolean hasNext() {
+                while (next == null && upstream.hasNext()) {
+                    JsonNode row = upstream.next();
+                    next = fn.apply(row);
+                }
+                return next != null;
+            }
+            @Override public JsonNode next() {
+                if (!hasNext()) throw new NoSuchElementException();
+                JsonNode out = next; next = null; return out;
+            }
+        };
+    }
+
+    /** Extract per-step parallelism. Only jvs-enrich exposes it today;
+     *  everything else stays single-threaded. Returns 1 when unset / <=0. */
+    private static int parallelismOf(StepSpec spec) {
+        if (spec instanceof StepSpec.JvsEnrich e && e.parallelism() != null && e.parallelism() > 1) {
+            return e.parallelism();
+        }
+        return 1;
     }
 
     private static String sinkName(Sink<JsonNode> s) {

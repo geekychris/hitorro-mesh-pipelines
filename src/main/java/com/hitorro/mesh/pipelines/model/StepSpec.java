@@ -135,8 +135,25 @@ public sealed interface StepSpec {
      * the classpath AND OpenNLP models under
      * {@code ${HT_BIN}/data/opennlpmodels1.5/&lt;lang&gt;-*.bin} —
      * install with {@code scripts/install-nlp-models.sh}.</p>
+     *
+     * <p>{@code parallelism} — optional worker-thread count for the
+     * NER/segmentation work. {@code null} or {@code <=1} = the historical
+     * single-threaded path. Values {@code >1} fan the enrichment through
+     * a {@code ParIterator}-backed Farm with {@code parallelism} workers
+     * and bounded queues (size {@code parallelism*4} on each side).
+     * Note the enrichment mappers must be safe to invoke concurrently on
+     * distinct {@code ProjectionContext} objects; the built-in OpenNLP
+     * mappers are read-only against their models. Start with 2 and
+     * measure before going higher.</p>
      */
-    record JvsEnrich(List<String> tags, String typeJsonResource) implements StepSpec { }
+    record JvsEnrich(List<String> tags, String typeJsonResource,
+                     Integer parallelism) implements StepSpec {
+        /** Back-compat 2-arg constructor — parallelism defaults to null
+         *  (single-threaded, matches pre-parallel behavior). */
+        public JvsEnrich(List<String> tags, String typeJsonResource) {
+            this(tags, typeJsonResource, null);
+        }
+    }
 
     /**
      * Runs a local LLM (Ollama by default, {@code llama3.2}) to translate
