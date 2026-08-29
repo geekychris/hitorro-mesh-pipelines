@@ -194,6 +194,17 @@ between deps, edge colour tracking upstream state as the wave of
 "done" cascades through the graph). Restartable jobs get a
 `↻ restartable` badge in the live header + history cards.
 
+## Durable scheduling
+
+For hands-off recurring runs — "ingest hourly, catch up if the driver
+was offline, remember where I left off" — see
+[`docs/scheduling.md`](docs/scheduling.md). Core logic lives in
+`com.hitorro.mesh.pipelines.schedule.*` (Spring-free POJOs +
+JSON-file persistence), wired into the driver by
+`com.hitorro.mesh.driver.app.schedule.*`. The REST surface is at
+`/mesh/schedules` and there is a matching shell wrapper at
+`hitorro-mesh-examples/scripts/mesh-schedule.sh`.
+
 ## Testing
 
 ```bash
