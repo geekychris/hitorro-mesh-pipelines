@@ -5,6 +5,24 @@ A job is a directed graph of nodes; each node is internally a pipeline
 (source → steps → optional reduce → one-or-more sinks); edges materialise
 as files, key-value stores, indices, or streaming queues.
 
+## Docs
+
+Start here if you're new — the docs are ordered from concept to
+reference:
+
+- **[authoring-a-pipeline.md](docs/authoring-a-pipeline.md)** — write your first pipeline
+  from scratch (source → steps → sinks; multi-node DAGs; YAML vs Groovy).
+- **[pipeline-lifecycles.md](docs/pipeline-lifecycles.md)** — terminating (batch) vs
+  continuous (Kafka/NATS) pipelines; how each resumes after downtime.
+- **[scheduling.md](docs/scheduling.md)** — run terminating pipelines on cron/interval
+  with durable checkpoints and boot-time catch-up.
+- **[streaming-sql.md](docs/streaming-sql.md)** — ad-hoc live SQL over Kafka/NATS
+  topics via SSE; when to reach for it vs a pipeline.
+- **[pipeline-framework.adoc](docs/pipeline-framework.adoc)** — internals: dispatchers,
+  shuffle, agent capabilities.
+- **[examples/](docs/examples/)** — worked YAMLs for mail (time-cursor + row-id-cursor)
+  and Kafka continuous ingest.
+
 Phase 1 (driver-local) and Phase 2 (mesh distribution) are both landed —
 `PipelineScheduler` fans nodes across agents that advertise the
 `pipeline-node` capability via `hitorro-mesh-agent-pipelines`, and the
@@ -203,7 +221,38 @@ was offline, remember where I left off" — see
 JSON-file persistence), wired into the driver by
 `com.hitorro.mesh.driver.app.schedule.*`. The REST surface is at
 `/mesh/schedules` and there is a matching shell wrapper at
-`hitorro-mesh-examples/scripts/mesh-schedule.sh`.
+`hitorro-mesh-examples/scripts/mesh-schedule.sh`. Scheduler-invoked
+runs show up in the same `/mesh/jobs` listing and Jobs UI tab as
+ad-hoc submissions, with the lifecycle badge (`▪ batch` /
+`● continuous`) inferred from the source graph.
+
+## Streaming SQL
+
+Pipelines materialize into durable shapes (indexes, KV, files).
+When you want the opposite — ad-hoc live queries over an unbounded
+source — use **streaming SQL**: register a Kafka/NATS topic once via
+`POST /mesh/queries/register-streaming`, then subscribe to
+`GET /mesh/queries/stream?sql=…` for a live SSE feed of matching rows.
+
+```bash
+# Register the topic (once)
+curl -X POST http://localhost:8085/mesh/queries/register-streaming \
+     -H 'content-type: application/json' \
+     -d '{ "name":"events","format":"kafka","typeJson":"…",
+           "sourceConfig":{"bootstrap-servers":"localhost:9092",
+                           "group-id":"live","topic":"events"} }'
+
+# Tail matching rows live (Ctrl-C to stop)
+curl -N 'http://localhost:8085/mesh/queries/stream?sql=SELECT+id,level+FROM+events+WHERE+level%3D%27WARN%27'
+
+# Or use the shell wrapper
+./mesh-stream-query.sh "SELECT id, level FROM events WHERE level='WARN'"
+```
+
+A common combined shape: a continuous pipeline ingests
+`kafka:events → jvs-lucene`, while a dashboard SSE-subscribes to the
+same topic for a live tail (different consumer group, no offset
+contention). Full walkthrough: [`docs/streaming-sql.md`](docs/streaming-sql.md).
 
 ## Testing
 
