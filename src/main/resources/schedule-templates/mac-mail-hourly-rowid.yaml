@@ -1,0 +1,71 @@
+# mac-mail-hourly-rowid — Mac Mail delta ingest using a MAX-ROWID cursor.
+#
+# LIFECYCLE:  terminating (SQLite drains, job SUCCEEDs)
+# CHECKPOINT: opaque monotonic id — the job itself writes it back via
+#             ctx.setCheckpoint(...) at the tail of the pipeline. The
+#             scheduler then persists that value as the next run's
+#             ${CHECKPOINT}, ignoring its default ${NOW} advance.
+#
+# WHY ROWID INSTEAD OF TIME?
+#   * A time-cursor risks dropping messages that arrive at exactly the
+#     cutoff instant — `WHERE date_received > 1788004800` misses any
+#     row whose date_received == 1788004800 written after we ran.
+#   * ROWID is monotonic and unique in Mac Mail's Envelope Index — safer
+#     for at-least-once ingest guarantees.
+#
+# Register with:
+#   mesh-schedule.sh create mac-mail-hourly-rowid mac-mail-hourly-rowid.yaml \
+#       --cron '0 0 * * * *' --catchup-grace 60s
+#
+# First-run seed: set the initial checkpoint through the UI or:
+#   mesh-schedule.sh checkpoint set mac-mail-hourly-rowid 0
+job: mac-mail-hourly-rowid
+nodes:
+
+  # 1. Pull all rows with ROWID > checkpoint.
+  - id: extract
+    pipeline:
+      source:
+        kind: sqlite
+        path: "~/Library/Mail/V10/MailData/Envelope Index"
+        query: |
+          SELECT
+            m.ROWID          AS rowid,
+            m.date_received  AS received_ts,
+            addr.address     AS sender_address,
+            subj.subject     AS subject,
+            m.read           AS read,
+            m.flagged        AS flagged
+          FROM messages m
+          LEFT JOIN addresses addr ON addr.ROWID = m.sender
+          LEFT JOIN subjects  subj ON subj.ROWID = m.subject
+          WHERE m.ROWID > COALESCE(NULLIF('${CHECKPOINT}', ''), '0')
+          ORDER BY m.ROWID ASC
+      sinks:
+        - kind: ndjson-file
+          url: "/tmp/hitorro-mesh-scheduled/${SCHEDULE_NAME}/${NOW_UNIX_SECONDS}.ndjson"
+
+  # 2. Second pass that just watches every row flow past and remembers
+  #    the largest ROWID. On the final row of the batch, ctx.setCheckpoint
+  #    is called — the scheduler picks that up when the job succeeds.
+  #
+  #    binding.setVariable('maxSeen', ...) is Groovy's way to persist
+  #    mutable state across per-row invocations of the same script
+  #    (each row gets a fresh binding otherwise).
+  - id: capture-checkpoint
+    depends: [ extract ]
+    pipeline:
+      source: { kind: ref, node: extract }
+      steps:
+        - kind: groovy-map
+          script: |
+            def cur = binding.hasVariable('maxSeen') ? maxSeen : 0L
+            def rid = (row.rowid ?: 0L) as long
+            if (rid > cur) {
+                binding.setVariable('maxSeen', rid)
+                // Last write wins — the value at end-of-run is what
+                // the scheduler persists as ${CHECKPOINT} for next run.
+                ctx.setCheckpoint(String.valueOf(rid))
+            }
+            row
+      sinks: []   # nothing else needs this pass; it's a side-effect stage

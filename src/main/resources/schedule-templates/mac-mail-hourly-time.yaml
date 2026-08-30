@@ -1,0 +1,53 @@
+# mac-mail-hourly-time — hourly delta ingest of Mac Mail using a TIME cursor.
+#
+# LIFECYCLE:  terminating (SQLite source drains, job SUCCEEDs)
+# CHECKPOINT: time-based — scheduler stamps ${NOW} (ISO instant) on success,
+#             next run reads `WHERE date_received > ${CHECKPOINT_UNIX_SECONDS}`.
+#             No job-side write-back needed.
+#
+# Register with:
+#   mesh-schedule.sh create mac-mail-hourly-time mac-mail-hourly-time.yaml \
+#       --cron '0 0 * * * *' --catchup-grace 60s
+#
+# For the alternative cursor style (max ROWID via ctx.setCheckpoint), see
+# mac-mail-hourly-rowid.yaml — pick whichever matches your source's guarantees.
+#
+# The scheduler will:
+#   * fire on the top of every hour (Spring 6-field cron: sec min hr dom mon dow)
+#   * substitute ${CHECKPOINT} — an ISO instant of the last successful run —
+#     into the SQL WHERE clause, so each run reads only new messages
+#   * advance the checkpoint to the run start time on success
+#   * if the driver was offline for a while, replay the missing hours once
+#     on startup instead of losing them (bounded by `catchupGraceSeconds`)
+#
+# First run: ${CHECKPOINT} is blank, so the WHERE clause becomes
+# `date_received > 0` — full ingest.  Subsequent runs pull only the delta.
+job: mac-mail-hourly
+nodes:
+  - id: extract
+    pipeline:
+      source:
+        kind: sqlite
+        path: "~/Library/Mail/V10/MailData/Envelope Index"
+        # Mac Mail stores date_received as Unix seconds, so we compare
+        # directly against ${CHECKPOINT_UNIX_SECONDS} (blank on first
+        # run → the COALESCE fallback of 0 wins).
+        query: |
+          SELECT
+            m.ROWID          AS id,
+            m.date_received  AS received_ts,
+            addr.address     AS sender_address,
+            subj.subject     AS subject,
+            m.read           AS read,
+            m.flagged        AS flagged
+          FROM messages m
+          LEFT JOIN addresses addr ON addr.ROWID = m.sender
+          LEFT JOIN subjects  subj ON subj.ROWID = m.subject
+          WHERE m.date_received > COALESCE(NULLIF('${CHECKPOINT_UNIX_SECONDS}', ''), '0')
+          ORDER BY m.date_received ASC
+      sinks:
+        - kind: ndjson-file
+          # Per-schedule output dir keeps concurrent schedules from
+          # stomping on each other.  ${SCHEDULE_NAME} is always the
+          # schedule's `name` field.
+          url: "/tmp/hitorro-mesh-scheduled/${SCHEDULE_NAME}/${NOW_UNIX_SECONDS}.ndjson"

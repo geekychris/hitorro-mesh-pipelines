@@ -1,0 +1,43 @@
+[
+  {
+    "id": "mac-mail-hourly-time",
+    "title": "Mac Mail — hourly, time cursor",
+    "lifecycle": "TERMINATING",
+    "description": "Hourly delta ingest of ~/Library/Mail. WHERE date_received > ${CHECKPOINT_UNIX_SECONDS}; scheduler stamps ${NOW} on success. Simple, no job-side write-back. Best when the source has a reliable monotonic timestamp.",
+    "yaml": "mac-mail-hourly-time.yaml",
+    "defaults": {
+      "name": "mac-mail-hourly-time",
+      "cron": "0 0 * * * *",
+      "catchupGraceSeconds": 60,
+      "maxConcurrent": 1
+    }
+  },
+  {
+    "id": "mac-mail-hourly-rowid",
+    "title": "Mac Mail — hourly, row-id cursor (ctx.setCheckpoint)",
+    "lifecycle": "TERMINATING",
+    "description": "Same ingest as the time variant, but cursors on max(ROWID). A groovy-map step captures the largest ROWID it saw and calls ctx.setCheckpoint(...) — the scheduler picks that up as ${CHECKPOINT} for the next run. Safer against boundary-time collisions.",
+    "yaml": "mac-mail-hourly-rowid.yaml",
+    "defaults": {
+      "name": "mac-mail-hourly-rowid",
+      "cron": "0 0 * * * *",
+      "catchupGraceSeconds": 60,
+      "maxConcurrent": 1,
+      "checkpoint": "0"
+    }
+  },
+  {
+    "id": "kafka-events-to-index",
+    "title": "Kafka → JVS Lucene index (continuous)",
+    "lifecycle": "CONTINUOUS",
+    "description": "Long-lived Kafka consumer writing every message to a Lucene index. Runs until cancelled. NOT typically scheduled — a continuous pipeline manages its own offset (Kafka consumer group). Load this template to see the shape; you'll usually deploy it via 'Pipelines → Run' with restartable:true, not as a schedule.",
+    "yaml": "kafka-events-to-index.yaml",
+    "defaults": {
+      "name": "kafka-events-to-index",
+      "cron": "0 0 * * * *",
+      "catchupGraceSeconds": 60,
+      "maxConcurrent": 1,
+      "enabled": false
+    }
+  }
+]
