@@ -12,7 +12,8 @@ import java.util.Map;
  * A named, pre-baked schedule the operator can pick as a starting
  * point in the UI's "New from template..." picker. Loaded from
  * {@code classpath:schedule-templates/manifest.json} at driver start
- * via {@link ScheduleTemplateRegistry}.
+ * via {@link com.hitorro.util.persist.ClasspathManifestRegistry}
+ * (see {@link #loadBundled}).
  *
  * <p>The registry inlines the YAML on read so REST clients get one
  * self-contained payload per template — no follow-up fetch to hydrate
@@ -46,4 +47,18 @@ public class ScheduleTemplate {
      *  {@link Schedule} field names — the UI applies whatever keys are
      *  present without validation. */
     public Map<String, Object> defaults = new LinkedHashMap<>();
+
+    /** Factory returning a registry wired to
+     *  {@code classpath:schedule-templates/manifest.json} — the
+     *  bundled starter set. */
+    public static com.hitorro.util.persist.ClasspathManifestRegistry<ScheduleTemplate> loadBundled() {
+        return new com.hitorro.util.persist.ClasspathManifestRegistry<>(
+                "schedule-templates/manifest.json",
+                "schedule-templates/",
+                ScheduleTemplate.class,
+                t -> t.id,
+                t -> t.yaml,
+                (t, body) -> t.jobYaml = body
+        );
+    }
 }

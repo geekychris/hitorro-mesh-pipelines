@@ -42,6 +42,21 @@
             <artifactId>hitorro-streams</artifactId>
             <version>${hitorro.version}</version>
         </dependency>
+        <!-- JsonFileEntityStore / NamedTextValueStore / DurableScheduler used
+             by the schedule/ package. Pulls in hitorro-core transitively too.
+             Exclude slf4j-reload4j so downstream Spring Boot apps aren't
+             surprised by a competing SLF4J binding at boot. -->
+        <dependency>
+            <groupId>com.hitorro</groupId>
+            <artifactId>hitorro-util</artifactId>
+            <version>${hitorro.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-reload4j</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
         <dependency>
             <groupId>com.hitorro</groupId>
             <artifactId>hitorro-streams-kafka</artifactId>

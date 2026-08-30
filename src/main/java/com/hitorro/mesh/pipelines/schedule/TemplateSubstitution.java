@@ -28,6 +28,12 @@ import java.util.regex.Pattern;
  * time), not replaced with empty strings — makes YAML parse errors
  * more diagnosable when a template references a variable the
  * substituter doesn't know.</p>
+ *
+ * <p>Sibling to {@code com.hitorro.util.core.params.PropertiesUtil}'s
+ * {@code resolveJsonVariable} — that one lower-cases variable names
+ * and drops unknowns silently. This one keeps case-sensitive uppercase
+ * names and preserves unknowns as literal {@code ${VAR}} for
+ * diagnostics. Kept scheduler-local for that reason.</p>
  */
 public final class TemplateSubstitution {
 
