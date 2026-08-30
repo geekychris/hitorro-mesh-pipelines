@@ -2,20 +2,26 @@
 #
 # LIFECYCLE:  continuous (Kafka source runs forever; job stays in RUNNING
 #             until DELETE /mesh/jobs/{id})
-# RESUME:     Kafka consumer group `${JOB_NAME}-consumer` owns the offset.
-#             On driver restart, the `restartable: true` flag causes
-#             PipelinesBootResumer to re-submit this spec, and the same
-#             groupId picks up where the previous JVM left off — zero
-#             pipeline-side checkpoint machinery involved.
+# RESUME:     Kafka consumer group owns the offset. On driver restart,
+#             `restartable: true` causes PipelinesBootResumer to re-submit
+#             this spec, and the same groupId picks up where the previous
+#             JVM left off — zero pipeline-side checkpoint machinery.
 #
-# NOT SCHEDULED. Do not put this in a schedule — schedules are for
+# PREREQUISITES (adjust before running):
+#   1. A reachable Kafka broker at `bootstrap` below.
+#   2. A JVS type json resource at `typeJsonResource` — points at
+#      config/types/<yourtype>.json describing the row shape. Without
+#      this, the sink rejects the spec with "url is required" at start.
+#   3. Optional but recommended: a config/schemas/<yourtype>.schema.json
+#      matching the type.
+#
+# NOT SCHEDULED. Don't attach this to a schedule — schedules are for
 # terminating polls with a WHERE-cursor. Instead submit once:
 #   mesh-pipeline.sh run kafka-events-to-index.yaml
 # The UI's Jobs tab will show a "● continuous" badge on the row.
 #
 # Cancel with:
-#   mesh-pipeline.sh cancel <jobId>
-# (or DELETE /mesh/jobs/{jobId})
+#   mesh-pipeline.sh cancel <jobId>       # (or DELETE /mesh/jobs/{jobId})
 
 job: kafka-events-to-index
 restartable: true
@@ -42,5 +48,7 @@ nodes:
       sinks:
         # Continuous writes into the same index every message. The Lucene
         # sink batches internally; commits every N docs or T seconds.
-        - kind: jvs-lucene-sink
+        - kind: jvs-lucene
           name: kafka-events
+          typeJsonResource: "config/types/your-event-type.json"   # REQUIRED — edit
+          storeSource: true

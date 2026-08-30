@@ -42,5 +42,7 @@ nodes:
       sinks:
         # Continuous writes into the same index every message. The Lucene
         # sink batches internally; commits every N docs or T seconds.
-        - kind: jvs-lucene-sink
+        - kind: jvs-lucene
           name: kafka-events
+          typeJsonResource: "config/types/your-event-type.json"   # REQUIRED — edit
+          storeSource: true
