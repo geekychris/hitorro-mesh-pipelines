@@ -39,6 +39,17 @@ public final class StepFactory {
 
     public static Function<JsonNode, JsonNode> compile(StepSpec spec,
             com.hitorro.mesh.pipelines.sinks.SinkRegistry registry) {
+        return compile(spec, registry, null);
+    }
+
+    /**
+     * Preferred compile: passes an optional {@link PipelineContext} down
+     * to step kinds that can use it (currently {@code groovy-map} and
+     * {@code jvs-groovy} via their adapters). Ad-hoc runs pass null.
+     */
+    public static Function<JsonNode, JsonNode> compile(StepSpec spec,
+            com.hitorro.mesh.pipelines.sinks.SinkRegistry registry,
+            PipelineContext ctx) {
         // Adapter-first — sub-modules like hitorro-mesh-pipelines-jvstype
         // override built-ins for their spec kinds.
         for (StepAdapter a : java.util.ServiceLoader.load(StepAdapter.class)) {
@@ -52,7 +63,7 @@ public final class StepFactory {
             case StepSpec.ToTyped   s -> compileToTyped(s.fields(), s.passthrough());
             case StepSpec.Lookup    s -> compileLookup(s.from(), s.onField(),
                                                        s.withKey(), s.adds(), registry);
-            case StepSpec.GroovyMap s -> GroovyMapStep.compile(s.script());
+            case StepSpec.GroovyMap s -> GroovyMapStep.compile(s.script(), ctx);
             case StepSpec.JvsGroovy s -> throw new UnsupportedOperationException(
                     "jvs-groovy needs hitorro-mesh-pipelines-jvstype on the classpath");
             case StepSpec.JvsEnrich s -> throw new UnsupportedOperationException(

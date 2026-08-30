@@ -1,0 +1,46 @@
+# kafka-events-to-index — CONTINUOUS pipeline: Kafka topic → JVS Lucene index.
+#
+# LIFECYCLE:  continuous (Kafka source runs forever; job stays in RUNNING
+#             until DELETE /mesh/jobs/{id})
+# RESUME:     Kafka consumer group `${JOB_NAME}-consumer` owns the offset.
+#             On driver restart, the `restartable: true` flag causes
+#             PipelinesBootResumer to re-submit this spec, and the same
+#             groupId picks up where the previous JVM left off — zero
+#             pipeline-side checkpoint machinery involved.
+#
+# NOT SCHEDULED. Do not put this in a schedule — schedules are for
+# terminating polls with a WHERE-cursor. Instead submit once:
+#   mesh-pipeline.sh run kafka-events-to-index.yaml
+# The UI's Jobs tab will show a "● continuous" badge on the row.
+#
+# Cancel with:
+#   mesh-pipeline.sh cancel <jobId>
+# (or DELETE /mesh/jobs/{jobId})
+
+job: kafka-events-to-index
+restartable: true
+
+nodes:
+  - id: consume
+    pipeline:
+      source:
+        kind: kafka
+        bootstrap: "localhost:9092"
+        topic: "events"
+        # Group id is the resume anchor. Change it to force a re-consume
+        # from the beginning; keep it stable to resume where you left off.
+        groupId: "kafka-events-to-index-consumer"
+      steps:
+        # Optional shape-fix: coerce the incoming record into whatever
+        # your JVS type expects. Kafka messages arrive as JSON; drop
+        # this step if the topic already carries JVS-shaped rows.
+        - kind: groovy-map
+          script: |
+            row.id           = row.id ?: gen.uuid()
+            row.ingested_ts  = gen.now()
+            row
+      sinks:
+        # Continuous writes into the same index every message. The Lucene
+        # sink batches internally; commits every N docs or T seconds.
+        - kind: jvs-lucene-sink
+          name: kafka-events

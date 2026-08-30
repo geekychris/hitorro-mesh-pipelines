@@ -1,8 +1,16 @@
-# mac-mail-hourly — hourly delta ingest of the Mac Mail Envelope Index.
+# mac-mail-hourly-time — hourly delta ingest of Mac Mail using a TIME cursor.
+#
+# LIFECYCLE:  terminating (SQLite source drains, job SUCCEEDs)
+# CHECKPOINT: time-based — scheduler stamps ${NOW} (ISO instant) on success,
+#             next run reads `WHERE date_received > ${CHECKPOINT_UNIX_SECONDS}`.
+#             No job-side write-back needed.
 #
 # Register with:
-#   mesh-schedule.sh create mac-mail-hourly mac-mail-hourly-schedule.yaml \
+#   mesh-schedule.sh create mac-mail-hourly-time mac-mail-hourly-time.yaml \
 #       --cron '0 0 * * * *' --catchup-grace 60s
+#
+# For the alternative cursor style (max ROWID via ctx.setCheckpoint), see
+# mac-mail-hourly-rowid.yaml — pick whichever matches your source's guarantees.
 #
 # The scheduler will:
 #   * fire on the top of every hour (Spring 6-field cron: sec min hr dom mon dow)

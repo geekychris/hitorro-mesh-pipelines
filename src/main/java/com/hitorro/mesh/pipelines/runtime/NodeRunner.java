@@ -77,9 +77,10 @@ public final class NodeRunner {
             // wrapped with a null-drop iterator identical to the shape
             // StepFactory.chain used to produce.
             Iterator<JsonNode> stream = raw;
+            PipelineContext ctx = new PipelineContext(status, node.id());
             for (int i = 0; i < p.steps().size(); i++) {
                 StepSpec spec = p.steps().get(i);
-                Function<JsonNode, JsonNode> fn = StepFactory.compile(spec, sinkRegistry);
+                Function<JsonNode, JsonNode> fn = StepFactory.compile(spec, sinkRegistry, ctx);
                 int parallelism = parallelismOf(spec);
                 if (parallelism > 1) {
                     // Bounded queues (4x parallelism each side) keep memory

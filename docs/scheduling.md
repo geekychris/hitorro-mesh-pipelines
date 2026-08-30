@@ -6,6 +6,15 @@ after the driver has been offline.  It is the answer to "I want the mail
 ingest to run every hour, and if my laptop was asleep from 2pm to 5pm I
 want the 3 missed hours to replay on wake."
 
+> **When to use scheduling vs. continuous mode.** Scheduled pipelines
+> are **terminating** — every source is finite (SQLite, NDJSON, HTTP
+> `?since=`, IMAP `SEARCH SINCE`, …) and each run drains to completion.
+> For **continuous** pipelines whose source is unbounded (Kafka, NATS),
+> use `restartable: true` on the job spec instead and let the source's
+> own offset store (consumer group / durable pull) handle resume. See
+> [pipeline-lifecycles.md](./pipeline-lifecycles.md) for the full
+> distinction.
+
 Core plumbing lives in `hitorro-mesh-pipelines/schedule/`; Spring wiring
 and the REST surface live in `hitorro-mesh-driver-app/schedule/`.
 
@@ -58,9 +67,36 @@ don't churn the whole registry.  Both use write-tmp-then-atomic-rename.
 ## Failure semantics
 
 - **Job throws / node fails** → checkpoint is **not** advanced; `lastFailureAt` + `lastError` recorded.  Next trigger tick retries with the same checkpoint (safe re-read).
-- **Job succeeds** → checkpoint is advanced to `${NOW}` (ISO instant), unless the job wrote a checkpoint mid-run through the REST endpoint (external override wins).
+- **Job succeeds** → checkpoint advances. Precedence:
+  1. **Job-provided override** — a step called `ctx.setCheckpoint("...")` (see [Advancing the checkpoint from the job itself](#advancing-the-checkpoint-from-the-job-itself) below).
+  2. **External `PUT /checkpoint`** mid-run — operator's value is preserved.
+  3. **Default** — scheduler stamps `${NOW}` (ISO instant of run start).
 - **Driver crashes mid-run** → checkpoint is untouched; on restart, the catch-up path kicks the schedule immediately.
 - **Two runs asked to fire concurrently** → capped by `maxConcurrent`; overflow triggers are dropped with a debug log.
+
+## Advancing the checkpoint from the job itself
+
+When the natural cursor isn't a time (e.g. `WHERE ROWID > ?`), the
+scheduler's default `${NOW}` advance doesn't help — only the job
+knows the max id it consumed.  A `groovy-map` step (or any custom
+step that receives the `ctx` binding) can write the value back:
+
+```yaml
+- kind: groovy-map
+  script: |
+    def cur = binding.hasVariable('maxSeen') ? maxSeen : 0L
+    def rid = (row.rowid ?: 0L) as long
+    if (rid > cur) {
+        binding.setVariable('maxSeen', rid)
+        ctx.setCheckpoint(String.valueOf(rid))
+    }
+    row
+```
+
+The last write in the run wins; on success, that value is persisted
+as the next run's `${CHECKPOINT}`.  See
+[`examples/mac-mail-hourly-rowid.yaml`](./examples/mac-mail-hourly-rowid.yaml)
+for the full worked example.
 
 ## REST surface
 

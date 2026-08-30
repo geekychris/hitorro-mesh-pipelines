@@ -34,6 +34,26 @@ public final class JobStatus {
     public volatile boolean restartable;
 
     /**
+     * Pipeline lifecycle — computed at job start from the shape of the
+     * source graph. {@code CONTINUOUS} means at least one source is an
+     * unbounded stream (Kafka topic, NATS subject) and the job will
+     * run until cancelled. {@code TERMINATING} means every source is
+     * finite and the job exits when the source(s) drain. Purely
+     * informational — exposed in the snapshot so the UI can badge each
+     * row without having to re-parse the spec.
+     */
+    public volatile String lifecycle;
+
+    /**
+     * When set by a step via {@link PipelineContext#setCheckpoint},
+     * this value replaces the scheduler's default {@code ${NOW}}
+     * advance after a successful run. Enables max-row-id / opaque
+     * cursors where only the job itself knows the value it consumed
+     * up to. Null (default) → scheduler uses its own advance policy.
+     */
+    public volatile String scheduledCheckpointOverride;
+
+    /**
      * Cooperative cancel flag. NodeRunner polls between each row and stops
      * the inner loop cleanly (still flushing / closing sinks) when set.
      * JobRunner skips remaining ranks. DELETE /mesh/jobs/{id} sets this.
@@ -68,7 +88,7 @@ public final class JobStatus {
                 finishedAt == null ? null : finishedAt.toString(),
                 error,
                 nodes.values().stream().map(NodeStatus::snapshot).toList(),
-                restartable);
+                restartable, lifecycle);
     }
 
     // ---------------------------------------------------------- Node status
@@ -114,12 +134,19 @@ public final class JobStatus {
     // ---------------------------------------------------------- Snapshots
     public record Snapshot(String jobId, String jobSpecName, String state,
                            String startedAt, String finishedAt, String error,
-                           List<NodeStatusSnapshot> nodes, boolean restartable) {
-        /** Back-compat 7-arg constructor — restartable defaults to false. */
+                           List<NodeStatusSnapshot> nodes, boolean restartable,
+                           String lifecycle) {
+        /** Back-compat 7-arg constructor — restartable=false, lifecycle=null. */
         public Snapshot(String jobId, String jobSpecName, String state,
                         String startedAt, String finishedAt, String error,
                         List<NodeStatusSnapshot> nodes) {
-            this(jobId, jobSpecName, state, startedAt, finishedAt, error, nodes, false);
+            this(jobId, jobSpecName, state, startedAt, finishedAt, error, nodes, false, null);
+        }
+        /** Back-compat 8-arg constructor — lifecycle=null. */
+        public Snapshot(String jobId, String jobSpecName, String state,
+                        String startedAt, String finishedAt, String error,
+                        List<NodeStatusSnapshot> nodes, boolean restartable) {
+            this(jobId, jobSpecName, state, startedAt, finishedAt, error, nodes, restartable, null);
         }
     }
 

@@ -5,6 +5,7 @@ package com.hitorro.mesh.pipelines.runtime;
 
 import com.hitorro.mesh.pipelines.model.JobSpec;
 import com.hitorro.mesh.pipelines.model.NodeSpec;
+import com.hitorro.mesh.pipelines.model.SourceSpec;
 import com.hitorro.mesh.pipelines.sinks.SinkRegistry;
 
 import java.time.Instant;
@@ -49,6 +50,7 @@ public final class JobRunner implements AutoCloseable {
     public JobStatus run(JobSpec spec, JobStatus status) {
         status.state = JobStatus.State.RUNNING;
         status.restartable = spec.restartable();
+        status.lifecycle = lifecycleOf(spec);
         try {
             List<List<NodeSpec>> ranks = topoRank(spec.nodes());
             // Populate deps + rank on every node status BEFORE any node
@@ -94,6 +96,24 @@ public final class JobRunner implements AutoCloseable {
             status.finishedAt = Instant.now();
         }
         return status;
+    }
+
+    /**
+     * A job is <b>continuous</b> if at least one of its source specs is
+     * an unbounded stream (Kafka topic, NATS subject). Otherwise
+     * <b>terminating</b> — every source is finite and the runner exits
+     * when the last source drains. Purely informational; drives the
+     * UI badge and the operator's expectation of how the job stops
+     * (naturally vs. via {@code DELETE /mesh/jobs/{id}}).
+     */
+    static String lifecycleOf(JobSpec spec) {
+        for (NodeSpec n : spec.nodes()) {
+            SourceSpec src = n.pipeline() == null ? null : n.pipeline().source();
+            if (src instanceof SourceSpec.Kafka || src instanceof SourceSpec.Nats) {
+                return "CONTINUOUS";
+            }
+        }
+        return "TERMINATING";
     }
 
     /**

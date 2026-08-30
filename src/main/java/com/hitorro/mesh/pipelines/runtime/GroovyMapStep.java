@@ -39,8 +39,16 @@ public final class GroovyMapStep {
 
     private GroovyMapStep() { }
 
-    /** Compile a groovy-map script into a row-transform function. */
+    /** Compile a groovy-map script into a row-transform function.
+     *  {@code ctx} is optional (null in ad-hoc runs); when supplied, the
+     *  script sees a {@code ctx} binding it can use to call
+     *  {@code ctx.setCheckpoint("...")} to advance the scheduler's
+     *  persistent offset. */
     public static Function<JsonNode, JsonNode> compile(String script) {
+        return compile(script, null);
+    }
+
+    public static Function<JsonNode, JsonNode> compile(String script, PipelineContext ctx) {
         // Cache the parsed Script class — reused for every row.
         final Script parsed;
         final GroovyGenerators gen;
@@ -59,6 +67,7 @@ public final class GroovyMapStep {
             Binding b = new Binding();
             b.setVariable("row", rowMap);
             b.setVariable("gen", gen);
+            if (ctx != null) b.setVariable("ctx", ctx);
             parsed.setBinding(b);
             Object result;
             try {
