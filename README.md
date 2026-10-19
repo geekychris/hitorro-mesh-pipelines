@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Hitorro Mesh Pipelines logo" width="180">
+</p>
+
 # hitorro-mesh-pipelines
 
 DAG pipeline framework for the [Hitorro Mesh](https://github.com/hitorro/hitorro-mesh).
