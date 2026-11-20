@@ -7,6 +7,7 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.DeserializationFeature;
 import com.hitorro.util.json.JsonMappers;
+import com.hitorro.util.json.YamlMappers;
 import com.hitorro.mesh.pipelines.model.JobSpec;
 
 import java.io.IOException;
@@ -26,8 +27,8 @@ import java.nio.file.Path;
 public final class JobSpecYaml {
 
     // 3.x: new YAMLMapper()/new ObjectMapper() with FAIL_ON_UNKNOWN_PROPERTIES disabled.
-    // Jackson2Yaml: Jackson 2's YAML 1.1 scalar typing, defaults and stream limits.
-    private static final ObjectMapper YAML = Jackson2Yaml.builder()
+    // YamlMappers: Jackson 2's YAML 1.1 scalar typing, defaults and stream limits.
+    private static final ObjectMapper YAML = YamlMappers.builder()
             .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
             .build();
 
