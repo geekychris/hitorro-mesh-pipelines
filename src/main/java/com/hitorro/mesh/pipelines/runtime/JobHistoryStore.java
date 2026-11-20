@@ -3,7 +3,9 @@
  */
 package com.hitorro.mesh.pipelines.runtime;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
+import tools.jackson.core.JacksonException;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -26,7 +28,7 @@ import java.util.List;
  */
 public final class JobHistoryStore {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
 
     private final Path file;
 
@@ -76,7 +78,7 @@ public final class JobHistoryStore {
                 catch (Exception ignore) { /* skip malformed */ }
             }
             return out;
-        } catch (IOException e) {
+        } catch (JacksonException | IOException e) {
             return List.of();
         }
     }

@@ -3,7 +3,7 @@
  */
 package com.hitorro.mesh.pipelines.sources;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import com.hitorro.mesh.pipelines.model.SourceSpec;
 
 import java.nio.file.Path;

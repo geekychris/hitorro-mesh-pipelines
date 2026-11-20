@@ -3,6 +3,7 @@
  */
 package com.hitorro.mesh.pipelines.runtime;
 
+import com.hitorro.util.json.JsonMappers;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -217,7 +218,7 @@ class JobRegistryTest {
                 Instant.now().toString(), Instant.now().toString(), 5L,
                 null, 0L, 0L, 0, List.of());
         try {
-            var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            var mapper = JsonMappers.json();
             java.nio.file.Files.writeString(hist.file(),
                     mapper.writeValueAsString(raw) + "\n");
         } catch (Exception e) { throw new RuntimeException(e); }

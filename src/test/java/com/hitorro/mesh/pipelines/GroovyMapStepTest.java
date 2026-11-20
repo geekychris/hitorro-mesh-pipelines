@@ -3,8 +3,9 @@
  */
 package com.hitorro.mesh.pipelines;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
 import com.hitorro.mesh.pipelines.model.JobSpec;
 import com.hitorro.mesh.pipelines.parse.JobSpecYaml;
 import com.hitorro.mesh.pipelines.runtime.BundledJobs;
@@ -23,7 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class GroovyMapStepTest {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
 
     @Test
     void groovy_script_mutates_row_and_returns_it() throws Exception {
@@ -36,7 +37,7 @@ class GroovyMapStepTest {
         JsonNode out = step.apply(input);
         assertThat(out.get("n").asInt()).isEqualTo(5);
         assertThat(out.get("doubled").asInt()).isEqualTo(10);
-        assertThat(out.get("tag").asText()).isEqualTo("processed");
+        assertThat(out.get("tag").asString()).isEqualTo("processed");
     }
 
     @Test
@@ -55,10 +56,10 @@ class GroovyMapStepTest {
                 """);
         JsonNode a = step.apply(JSON.readTree("{}"));
         JsonNode b = step.apply(JSON.readTree("{}"));
-        assertThat(a.get("id").asText()).hasSize(36);   // UUID string length
+        assertThat(a.get("id").asString()).hasSize(36);   // UUID string length
         assertThat(a.get("seq").asLong()).isEqualTo(1);
         assertThat(b.get("seq").asLong()).isEqualTo(2); // monotonic
-        assertThat(a.get("id").asText()).isNotEqualTo(b.get("id").asText());
+        assertThat(a.get("id").asString()).isNotEqualTo(b.get("id").asString());
     }
 
     @Test
@@ -85,7 +86,7 @@ class GroovyMapStepTest {
             assertThat(row.hasNonNull("altitude_bucket")).isTrue();
             assertThat(row.hasNonNull("event_id")).isTrue();
             assertThat(row.hasNonNull("seq")).isTrue();
-            assertThat(row.get("event_id").asText()).hasSize(36);
+            assertThat(row.get("event_id").asString()).hasSize(36);
         });
     }
 }

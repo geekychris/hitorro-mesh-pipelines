@@ -3,8 +3,9 @@
  */
 package com.hitorro.mesh.pipelines.sinks;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
 import com.hitorro.mesh.pipelines.model.SinkSpec;
 import com.hitorro.util.core.iterator.sinks.Sink;
 import org.junit.jupiter.api.Test;
@@ -55,8 +56,8 @@ class SinkRegistryDecoratorTest {
         reg.registerDecorator((spec, base) -> replacement);
 
         Sink<JsonNode> sink = reg.create(new SinkSpec.NdjsonFile("file:/never-touched.ndjson"));
-        sink.add(new ObjectMapper().readTree("{\"x\":1}"));
-        sink.add(new ObjectMapper().readTree("{\"x\":2}"));
+        sink.add(JsonMappers.json().readTree("{\"x\":1}"));
+        sink.add(JsonMappers.json().readTree("{\"x\":2}"));
         sink.close();
         assertThat(seen.get()).isEqualTo(2);
         // Original file should NOT exist — the decorator's replacement skipped it.

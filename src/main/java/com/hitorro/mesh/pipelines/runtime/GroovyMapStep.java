@@ -3,8 +3,9 @@
  */
 package com.hitorro.mesh.pipelines.runtime;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
 import groovy.lang.Binding;
 import groovy.lang.Closure;
 import groovy.lang.GroovyShell;
@@ -35,7 +36,7 @@ import java.util.function.Function;
  */
 public final class GroovyMapStep {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
 
     private GroovyMapStep() { }
 
@@ -63,7 +64,7 @@ public final class GroovyMapStep {
             if (!row.isObject()) return null;
             // Jackson → LinkedHashMap so the script sees a normal Groovy map.
             Map<String, Object> rowMap = JSON.convertValue(row,
-                    new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() { });
+                    new tools.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() { });
             Binding b = new Binding();
             b.setVariable("row", rowMap);
             b.setVariable("gen", gen);

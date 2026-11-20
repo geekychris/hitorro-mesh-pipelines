@@ -3,7 +3,7 @@
  */
 package com.hitorro.mesh.pipelines.sinks;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import com.hitorro.mesh.pipelines.model.SinkSpec;
 import com.hitorro.util.core.iterator.sinks.CountingSink;
 import com.hitorro.util.core.iterator.sinks.CsvFileSink;

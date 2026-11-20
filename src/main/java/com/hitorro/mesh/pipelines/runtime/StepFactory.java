@@ -3,15 +3,17 @@
  */
 package com.hitorro.mesh.pipelines.runtime;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
+import tools.jackson.databind.node.ObjectNode;
 import com.hitorro.mesh.pipelines.model.StepSpec;
 
 import java.util.Iterator;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import com.hitorro.util.json.JsonValues;
 
 /**
  * Compiles a {@link StepSpec} into a function that transforms one row.
@@ -24,7 +26,7 @@ import java.util.regex.Pattern;
  */
 public final class StepFactory {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
 
     /** Filter grammar: {@code <col> <op> <literal>} where op ∈ {==,!=,>,>=,<,<=,LIKE}. */
     private static final Pattern FILTER_EXPR =
@@ -152,7 +154,7 @@ public final class StepFactory {
                     if (v == null || v.isNull()) yield false;
                     // MySQL-ish: % → .*, _ → .
                     String pat = literal.replace(".", "\\.").replace("%", ".*").replace("_", ".");
-                    yield v.asText().matches("(?i)" + pat);
+                    yield JsonValues.asText(v).matches("(?i)" + pat);
                 }
                 default -> false;
             };
@@ -162,13 +164,13 @@ public final class StepFactory {
 
     private static boolean equal(JsonNode v, String literal, Double num) {
         if (v == null || v.isNull()) return "null".equals(literal);
-        if (num != null && v.isNumber()) return Double.compare(v.asDouble(), num) == 0;
-        return v.asText().equals(literal);
+        if (num != null && v.isNumber()) return Double.compare(JsonValues.asDouble(v), num) == 0;
+        return JsonValues.asText(v).equals(literal);
     }
 
     private static int compare(JsonNode v, Double num) {
         if (v == null || v.isNull() || num == null) return -1;
-        return Double.compare(v.asDouble(), num);
+        return Double.compare(JsonValues.asDouble(v), num);
     }
 
     private static JsonNode pluck(JsonNode row, String path) {
@@ -239,15 +241,15 @@ public final class StepFactory {
         if (type != null && type.startsWith("array<") && type.endsWith(">")) {
             if (v == null || v.isNull()) return null;
             String innerType = type.substring("array<".length(), type.length() - 1);
-            com.fasterxml.jackson.databind.node.ArrayNode arr = JSON.createArrayNode();
+            tools.jackson.databind.node.ArrayNode arr = JSON.createArrayNode();
             // Accept either a real array OR a comma-separated string.
             if (v.isArray()) {
                 for (JsonNode e : v) {
                     JsonNode c = coerce(e, innerType);
                     arr.add(c == null ? JSON.nullNode() : c);
                 }
-            } else if (v.isTextual()) {
-                for (String piece : v.asText().split(",")) {
+            } else if (v.isString()) {
+                for (String piece : JsonValues.asText(v).split(",")) {
                     JsonNode c = coerce(JSON.getNodeFactory().textNode(piece.trim()), innerType);
                     arr.add(c == null ? JSON.nullNode() : c);
                 }
@@ -289,7 +291,7 @@ public final class StepFactory {
     private static JsonNode coerce(JsonNode v, String type) {
         if (v == null || v.isNull()) return null;
         return switch (type) {
-            case "core_string" -> JSON.getNodeFactory().textNode(v.asText());
+            case "core_string" -> JSON.getNodeFactory().textNode(JsonValues.asText(v));
             case "core_long"   -> tryParseLong(v);
             case "core_double" -> tryParseDouble(v);
             case "core_boolean" -> tryParseBool(v);
@@ -300,19 +302,19 @@ public final class StepFactory {
 
     private static JsonNode tryParseLong(JsonNode v) {
         try {
-            long n = v.isNumber() ? v.asLong() : Long.parseLong(v.asText().trim());
+            long n = v.isNumber() ? JsonValues.asLong(v) : Long.parseLong(JsonValues.asText(v).trim());
             return JSON.getNodeFactory().numberNode(n);
         } catch (Exception e) { return null; }
     }
     private static JsonNode tryParseDouble(JsonNode v) {
         try {
-            double n = v.isNumber() ? v.asDouble() : Double.parseDouble(v.asText().trim());
+            double n = v.isNumber() ? JsonValues.asDouble(v) : Double.parseDouble(JsonValues.asText(v).trim());
             return JSON.getNodeFactory().numberNode(n);
         } catch (Exception e) { return null; }
     }
     private static JsonNode tryParseBool(JsonNode v) {
         if (v.isBoolean()) return v;
-        String s = v.asText().trim().toLowerCase();
+        String s = JsonValues.asText(v).trim().toLowerCase();
         return switch (s) {
             case "true", "yes", "y", "1"  -> JSON.getNodeFactory().booleanNode(true);
             case "false", "no", "n", "0"  -> JSON.getNodeFactory().booleanNode(false);
@@ -321,8 +323,8 @@ public final class StepFactory {
     }
     private static JsonNode tryParseTimestamp(JsonNode v) {
         try {
-            if (v.isNumber()) return JSON.getNodeFactory().numberNode(v.asLong());
-            long ms = java.time.Instant.parse(v.asText().trim()).toEpochMilli();
+            if (v.isNumber()) return JSON.getNodeFactory().numberNode(JsonValues.asLong(v));
+            long ms = java.time.Instant.parse(JsonValues.asText(v).trim()).toEpochMilli();
             return JSON.getNodeFactory().numberNode(ms);
         } catch (Exception e) { return null; }
     }
@@ -342,14 +344,14 @@ public final class StepFactory {
                 java.util.Map<String, JsonNode> idx = new java.util.HashMap<>(src.size());
                 for (JsonNode r : src) {
                     JsonNode k = r.get(onField);
-                    if (k != null && !k.isNull()) idx.putIfAbsent(k.asText(), r);
+                    if (k != null && !k.isNull()) idx.putIfAbsent(JsonValues.asText(k), r);
                 }
                 indexRef[0] = idx;
             }
             if (!row.isObject()) return row;
             JsonNode k = pluck(row, withKey);
             if (k == null || k.isNull()) return row;
-            JsonNode match = indexRef[0].get(k.asText());
+            JsonNode match = indexRef[0].get(JsonValues.asText(k));
             if (match == null) return row;
             ObjectNode out = ((ObjectNode) row).deepCopy();
             for (String col : adds) {

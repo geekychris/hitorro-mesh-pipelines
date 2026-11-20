@@ -3,9 +3,10 @@
  */
 package com.hitorro.mesh.pipelines.sinks;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
+import tools.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
@@ -27,7 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class ShuffleFanoutHashTest {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
 
     @Test
     void sameKey_alwaysSameBucket() {
@@ -89,9 +90,9 @@ class ShuffleFanoutHashTest {
         ObjectNode outer = JSON.createObjectNode();
         outer.putObject("user").put("country", "GB");
         int bGB1 = ShuffleFanoutSink.pickBucket(outer, "user.country", 8);
-        outer.with("user").put("country", "GB");                    // same value
+        outer.withObject("user").put("country", "GB");                    // same value
         int bGB2 = ShuffleFanoutSink.pickBucket(outer, "user.country", 8);
-        outer.with("user").put("country", "US");
+        outer.withObject("user").put("country", "US");
         int bUS  = ShuffleFanoutSink.pickBucket(outer, "user.country", 8);
         assertThat(bGB1).isEqualTo(bGB2);
         assertThat(bGB1).isNotEqualTo(bUS);

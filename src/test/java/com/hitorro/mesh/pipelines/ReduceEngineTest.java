@@ -3,9 +3,10 @@
  */
 package com.hitorro.mesh.pipelines;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
+import tools.jackson.databind.node.ObjectNode;
 import com.hitorro.mesh.pipelines.model.AggSpec;
 import com.hitorro.mesh.pipelines.model.ReduceSpec;
 import com.hitorro.mesh.pipelines.runtime.ReduceEngine;
@@ -32,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class ReduceEngineTest {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
 
     @Test
     void count_perGroup() {
@@ -159,7 +160,7 @@ class ReduceEngineTest {
         assertThat(collected.isArray()).isTrue();
         assertThat(collected.size()).isEqualTo(3);
         List<String> values = new ArrayList<>();
-        collected.forEach(v -> values.add(v.asText()));
+        collected.forEach(v -> values.add(v.asString()));
         assertThat(values).containsExactly("one", "two", "three");
     }
 
@@ -241,7 +242,7 @@ class ReduceEngineTest {
     }
 
     private static JsonNode fieldOf(List<JsonNode> out, String key, String val) {
-        for (JsonNode r : out) if (val.equals(r.get(key).asText())) return r;
+        for (JsonNode r : out) if (val.equals(r.get(key).asString())) return r;
         throw new AssertionError("no row with " + key + "=" + val);
     }
 
@@ -249,7 +250,7 @@ class ReduceEngineTest {
         outer:
         for (JsonNode r : out) {
             for (var e : criteria.entrySet()) {
-                if (!e.getValue().equals(r.get(e.getKey()).asText())) continue outer;
+                if (!e.getValue().equals(r.get(e.getKey()).asString())) continue outer;
             }
             return r;
         }

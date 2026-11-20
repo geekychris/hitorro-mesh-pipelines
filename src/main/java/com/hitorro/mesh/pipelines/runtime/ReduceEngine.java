@@ -3,14 +3,16 @@
  */
 package com.hitorro.mesh.pipelines.runtime;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
+import tools.jackson.databind.node.ObjectNode;
 import com.hitorro.mesh.pipelines.model.AggSpec;
 import com.hitorro.mesh.pipelines.model.ReduceSpec;
 
 import java.util.*;
 import java.util.stream.Collectors;
+import com.hitorro.util.json.JsonValues;
 
 /**
  * In-process group-by + aggregate. Buffers the upstream rows, folds them
@@ -24,7 +26,7 @@ import java.util.stream.Collectors;
  */
 public final class ReduceEngine {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
 
     private ReduceEngine() { }
 
@@ -38,7 +40,7 @@ public final class ReduceEngine {
             List<String> key = new ArrayList<>(spec.groupBy().size());
             for (String c : spec.groupBy()) {
                 JsonNode v = row.get(c);
-                key.add(v == null || v.isNull() ? "<null>" : v.asText());
+                key.add(v == null || v.isNull() ? "<null>" : JsonValues.asText(v));
             }
             byGroup.computeIfAbsent(key, k -> new Accumulator(spec.aggs())).add(row);
         }
@@ -93,13 +95,13 @@ public final class ReduceEngine {
                 if (a.kind() == AggSpec.AggKind.COUNT) continue;
                 JsonNode v = a.of() == null ? null : row.get(a.of());
                 switch (a.kind()) {
-                    case SUM, AVG -> { if (v != null && v.isNumber()) sum[i] += v.asDouble(); }
-                    case MIN -> { if (v != null && v.isNumber()) min[i] = Math.min(min[i], v.asDouble()); }
-                    case MAX -> { if (v != null && v.isNumber()) max[i] = Math.max(max[i], v.asDouble()); }
-                    case DISTINCT_COUNT -> { if (v != null && !v.isNull()) distinct[i].add(v.asText()); }
+                    case SUM, AVG -> { if (v != null && v.isNumber()) sum[i] += JsonValues.asDouble(v); }
+                    case MIN -> { if (v != null && v.isNumber()) min[i] = Math.min(min[i], JsonValues.asDouble(v)); }
+                    case MAX -> { if (v != null && v.isNumber()) max[i] = Math.max(max[i], JsonValues.asDouble(v)); }
+                    case DISTINCT_COUNT -> { if (v != null && !v.isNull()) distinct[i].add(JsonValues.asText(v)); }
                     case FIRST -> { if (first[i] == null) first[i] = v; }
                     case LAST  -> { last[i] = v; }
-                    case COLLECT -> { if (v != null && !v.isNull()) collected[i].add(v.isNumber() ? v.asDouble() : v.asText()); }
+                    case COLLECT -> { if (v != null && !v.isNull()) collected[i].add(v.isNumber() ? JsonValues.asDouble(v) : JsonValues.asText(v)); }
                     case COUNT -> { /* handled by outer counter */ }
                 }
             }

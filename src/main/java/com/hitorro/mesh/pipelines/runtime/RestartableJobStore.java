@@ -3,9 +3,11 @@
  */
 package com.hitorro.mesh.pipelines.runtime;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
 import com.hitorro.mesh.pipelines.model.JobSpec;
 import com.hitorro.mesh.pipelines.parse.JobSpecYaml;
+import tools.jackson.core.JacksonException;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -43,7 +45,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class RestartableJobStore {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
 
     private final Path file;
     private final Map<String, Entry> byJobId = new ConcurrentHashMap<>();
@@ -86,9 +88,9 @@ public final class RestartableJobStore {
     private void reload() {
         try {
             var raw = JSON.readValue(file.toFile(),
-                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Entry>>() { });
+                    new tools.jackson.core.type.TypeReference<Map<String, Entry>>() { });
             byJobId.putAll(raw);
-        } catch (IOException ignored) {
+        } catch (JacksonException ignored) {
             // Corrupt file — start fresh; next persist() overwrites it.
         }
     }
