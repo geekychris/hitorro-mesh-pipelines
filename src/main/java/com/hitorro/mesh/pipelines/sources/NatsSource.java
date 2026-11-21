@@ -3,8 +3,9 @@
  */
 package com.hitorro.mesh.pipelines.sources;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
 import io.nats.client.Connection;
 import io.nats.client.Message;
 import io.nats.client.Nats;
@@ -25,7 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class NatsSource implements Iterator<JsonNode>, AutoCloseable {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
     private static final Duration POLL = Duration.ofMillis(500);
 
     private final Connection conn;

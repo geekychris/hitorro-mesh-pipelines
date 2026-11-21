@@ -6,7 +6,7 @@
 
     <groupId>com.hitorro</groupId>
     <artifactId>hitorro-mesh-pipelines</artifactId>
-    <version>3.1.0</version>
+    <version>4.0.0</version>
     <packaging>jar</packaging>
 
     <name>hitorro-mesh-pipelines</name>
@@ -26,8 +26,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
-        <hitorro.version>3.0.2</hitorro.version>
-        <jackson.version>2.21.8</jackson.version>
+        <hitorro.version>4.0.0</hitorro.version>
         <spring-boot.version>4.1.3</spring-boot.version>
     </properties>
 
@@ -99,9 +98,9 @@
                 <scope>import</scope>
             </dependency>
             <dependency>
-                <groupId>com.fasterxml.jackson</groupId>
+                <groupId>tools.jackson</groupId>
                 <artifactId>jackson-bom</artifactId>
-                <version>2.21.8</version>
+                <version>3.1.8</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -460,17 +459,11 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- Jackson YAML for JobSpec parsing. Databind + core come via streams→core. -->
+        <!-- Jackson YAML for JobSpec parsing. Databind + core come via streams→core.
+             java.time (ScheduleStore) is built into Jackson 3 databind. -->
         <dependency>
-            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <groupId>tools.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-yaml</artifactId>
-            <version>${jackson.version}</version>
-        </dependency>
-        <!-- Java-time (Instant) serialization for ScheduleStore's JSON persistence. -->
-        <dependency>
-            <groupId>com.fasterxml.jackson.datatype</groupId>
-            <artifactId>jackson-datatype-jsr310</artifactId>
-            <version>${jackson.version}</version>
         </dependency>
 
         <!-- Spring integration is optional; the autoconfig activates only when

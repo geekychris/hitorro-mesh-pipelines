@@ -3,9 +3,10 @@
  */
 package com.hitorro.mesh.pipelines.runtime;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
+import tools.jackson.databind.node.ObjectNode;
 import com.hitorro.mesh.pipelines.model.StepSpec;
 import com.hitorro.mesh.pipelines.sinks.SinkRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,7 +34,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class StepFactoryTest {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
 
     @TempDir Path home;
     SinkRegistry registry;
@@ -133,7 +134,7 @@ class StepFactoryTest {
         ObjectNode in = JSON.createObjectNode();
         in.put("a", 1); in.put("b", 2); in.put("c", 3); in.put("d", 4);
         JsonNode out = f.apply(in);
-        assertThat(out.fieldNames()).toIterable().containsExactlyInAnyOrder("a", "b");
+        assertThat(out.propertyNames().iterator()).toIterable().containsExactlyInAnyOrder("a", "b");
     }
 
     @Test
@@ -154,8 +155,8 @@ class StepFactoryTest {
         in.put("other", "kept");
         JsonNode out = f.apply(in);
         assertThat(out.has("from_name")).isFalse();
-        assertThat(out.get("to_name").asText()).isEqualTo("value");
-        assertThat(out.get("other").asText()).isEqualTo("kept");
+        assertThat(out.get("to_name").asString()).isEqualTo("value");
+        assertThat(out.get("other").asString()).isEqualTo("kept");
     }
 
     @Test
@@ -163,7 +164,7 @@ class StepFactoryTest {
         Function<JsonNode, JsonNode> f = compile(new StepSpec.Rename("nope", "target"));
         JsonNode out = f.apply(row("other", "x"));
         assertThat(out.has("target")).isFalse();
-        assertThat(out.get("other").asText()).isEqualTo("x");
+        assertThat(out.get("other").asString()).isEqualTo("x");
     }
 
     // -------------------------------------------------- SetField
@@ -172,8 +173,8 @@ class StepFactoryTest {
     void setField_addsConstantString() {
         Function<JsonNode, JsonNode> f = compile(new StepSpec.SetField("source", "pipeline"));
         JsonNode out = f.apply(row("id", "u-1"));
-        assertThat(out.get("source").asText()).isEqualTo("pipeline");
-        assertThat(out.get("id").asText()).isEqualTo("u-1");
+        assertThat(out.get("source").asString()).isEqualTo("pipeline");
+        assertThat(out.get("id").asString()).isEqualTo("u-1");
     }
 
     @Test
@@ -190,7 +191,7 @@ class StepFactoryTest {
         ObjectNode in = JSON.createObjectNode();
         in.put("status", "draft");
         JsonNode out = f.apply(in);
-        assertThat(out.get("status").asText()).isEqualTo("processed");
+        assertThat(out.get("status").asString()).isEqualTo("processed");
     }
 
     // -------------------------------------------------- ToTyped coercion
@@ -213,8 +214,8 @@ class StepFactoryTest {
         in.put("t", "2025-01-01T00:00:00Z");             // ISO → epoch ms
 
         JsonNode out = f.apply(in);
-        assertThat(out.get("s").isTextual()).isTrue();
-        assertThat(out.get("s").asText()).isEqualTo("42");
+        assertThat(out.get("s").isString()).isTrue();
+        assertThat(out.get("s").asString()).isEqualTo("42");
         assertThat(out.get("n").asLong()).isEqualTo(123L);
         assertThat(out.get("d").asDouble()).isEqualTo(3.14);
         assertThat(out.get("b").asBoolean()).isTrue();
@@ -247,7 +248,7 @@ class StepFactoryTest {
 
         JsonNode out = f.apply(in);
         assertThat(out.get("n").asLong()).isEqualTo(42L);
-        assertThat(out.get("extra").asText()).isEqualTo("kept");
+        assertThat(out.get("extra").asString()).isEqualTo("kept");
     }
 
     @Test
@@ -261,13 +262,13 @@ class StepFactoryTest {
         JsonNode outArr = f.apply(inArr);
         assertThat(outArr.get("tags").isArray()).isTrue();
         assertThat(outArr.get("tags").size()).isEqualTo(3);
-        assertThat(outArr.get("tags").get(0).isTextual()).isTrue();
+        assertThat(outArr.get("tags").get(0).isString()).isTrue();
 
         // From comma-separated string.
         JsonNode outCsv = f.apply(row("tags", "a, b, c"));
         assertThat(outCsv.get("tags").isArray()).isTrue();
         assertThat(outCsv.get("tags").size()).isEqualTo(3);
-        assertThat(outCsv.get("tags").get(1).asText()).isEqualTo("b");
+        assertThat(outCsv.get("tags").get(1).asString()).isEqualTo("b");
     }
 
     @Test
@@ -310,7 +311,7 @@ class StepFactoryTest {
         in.putObject("user").put("name", "Alice").put("age", "30");
 
         JsonNode out = f.apply(in);
-        assertThat(out.get("user").get("name").asText()).isEqualTo("Alice");
+        assertThat(out.get("user").get("name").asString()).isEqualTo("Alice");
         assertThat(out.get("user").get("age").asLong()).isEqualTo(30L);
     }
 
@@ -330,8 +331,8 @@ class StepFactoryTest {
                 registry);
 
         JsonNode out = f.apply(row("iso3", "USA", "product", "widget"));
-        assertThat(out.get("country_name").asText()).isEqualTo("United States");
-        assertThat(out.get("product").asText()).isEqualTo("widget");
+        assertThat(out.get("country_name").asString()).isEqualTo("United States");
+        assertThat(out.get("product").asString()).isEqualTo("widget");
     }
 
     @Test
@@ -347,7 +348,7 @@ class StepFactoryTest {
                 registry);
 
         JsonNode out = f.apply(row("iso3", "ZZZ", "product", "gizmo"));
-        assertThat(out.get("iso3").asText()).isEqualTo("ZZZ");
+        assertThat(out.get("iso3").asString()).isEqualTo("ZZZ");
         assertThat(out.has("country_name")).isFalse();
     }
 
@@ -357,7 +358,7 @@ class StepFactoryTest {
                 new StepSpec.Lookup("empty", "k", "k", List.of("x")),
                 registry);
         JsonNode out = f.apply(row("k", "a"));
-        assertThat(out.get("k").asText()).isEqualTo("a");
+        assertThat(out.get("k").asString()).isEqualTo("a");
     }
 
     // -------------------------------------------------- compile() dispatch

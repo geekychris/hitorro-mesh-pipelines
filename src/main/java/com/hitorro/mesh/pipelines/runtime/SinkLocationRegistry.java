@@ -3,8 +3,10 @@
  */
 package com.hitorro.mesh.pipelines.runtime;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
+import tools.jackson.core.JacksonException;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -32,7 +34,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class SinkLocationRegistry {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
 
     /** sinkKind:name → agentId of last writer. */
     private final Map<String, String> byKey = new ConcurrentHashMap<>();
@@ -51,7 +53,7 @@ public final class SinkLocationRegistry {
                 Map<String, String> loaded = JSON.readValue(snapshotPath.toFile(),
                         new TypeReference<Map<String, String>>() { });
                 byKey.putAll(loaded);
-            } catch (IOException ignored) {
+            } catch (JacksonException ignored) {
                 // Corrupt file — start fresh, rewrite on next record.
             }
         }
@@ -88,7 +90,7 @@ public final class SinkLocationRegistry {
             Files.createDirectories(snapshotPath.getParent());
             JSON.writerWithDefaultPrettyPrinter()
                     .writeValue(snapshotPath.toFile(), byKey);
-        } catch (IOException ignored) {
+        } catch (JacksonException | IOException ignored) {
             // Best-effort — don't fail the pipeline for a snapshot IO error.
         }
     }

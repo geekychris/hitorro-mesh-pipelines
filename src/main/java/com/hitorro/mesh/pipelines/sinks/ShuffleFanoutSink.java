@@ -3,11 +3,13 @@
  */
 package com.hitorro.mesh.pipelines.sinks;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
 import com.hitorro.util.core.iterator.sinks.JsonNodeSinkBase;
 
 import java.io.IOException;
+import com.hitorro.util.json.JsonValues;
 
 /**
  * Mapper-side shuffle sink for auto-split reduce. Hashes each incoming
@@ -23,7 +25,7 @@ import java.io.IOException;
  */
 public final class ShuffleFanoutSink extends JsonNodeSinkBase {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
 
     private final String subjectPrefix;
     private final int buckets;
@@ -105,7 +107,7 @@ public final class ShuffleFanoutSink extends JsonNodeSinkBase {
 
     static int pickBucket(JsonNode row, String keyExpr, int buckets) {
         JsonNode v = pluck(row, keyExpr);
-        String key = (v == null || v.isNull()) ? "<null>" : v.asText();
+        String key = (v == null || v.isNull()) ? "<null>" : JsonValues.asText(v);
         int h = key.hashCode();
         return (h & 0x7fffffff) % buckets;
     }

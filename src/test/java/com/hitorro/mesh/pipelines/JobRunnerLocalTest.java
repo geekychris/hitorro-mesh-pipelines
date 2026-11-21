@@ -3,8 +3,9 @@
  */
 package com.hitorro.mesh.pipelines;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
 import com.hitorro.mesh.pipelines.model.JobSpec;
 import com.hitorro.mesh.pipelines.parse.JobSpecYaml;
 import com.hitorro.mesh.pipelines.runtime.JobRunner;
@@ -22,7 +23,7 @@ import static org.assertj.core.api.Assertions.*;
 
 class JobRunnerLocalTest {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
 
     @Test
     void runs_three_node_dag_end_to_end(@TempDir Path home) throws Exception {
@@ -68,7 +69,7 @@ class JobRunnerLocalTest {
         JsonNode asia = null;
         for (String line : rollup) {
             JsonNode r = JSON.readTree(line);
-            if ("Asia".equals(r.get("region").asText())) { asia = r; break; }
+            if ("Asia".equals(r.get("region").asString())) { asia = r; break; }
         }
         assertThat(asia).isNotNull();
         // Asia: CHN 1412M + IND 1408M + IDN 278M + PAK 231M + JPN 125M = 3454M

@@ -3,8 +3,9 @@
  */
 package com.hitorro.mesh.pipelines.sources;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
 import com.hitorro.mesh.pipelines.model.SourceSpec;
 import com.hitorro.mesh.pipelines.sinks.SinkRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,7 +40,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class SourceFactoryTest {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
 
     @TempDir Path home;
     SinkRegistry registry;
@@ -63,7 +64,7 @@ class SourceFactoryTest {
                 """);
         List<JsonNode> rows = drain(sf.open(new SourceSpec.NdjsonFile(f.toString())));
         assertThat(rows).hasSize(3);
-        assertThat(rows).extracting(r -> r.get("s").asText())
+        assertThat(rows).extracting(r -> r.get("s").asString())
                 .containsExactly("one", "two", "three");
     }
 
@@ -96,7 +97,7 @@ class SourceFactoryTest {
         }
         List<JsonNode> rows = drain(sf.open(new SourceSpec.NdjsonFile(f.toString())));
         assertThat(rows).hasSize(2);
-        assertThat(rows).extracting(r -> r.get("k").asText())
+        assertThat(rows).extracting(r -> r.get("k").asString())
                 .containsExactly("first", "second");
     }
 
@@ -148,9 +149,9 @@ class SourceFactoryTest {
         Files.writeString(f, "iso3,name,population\nUSA,United States,331\nCHN,China,1400\n");
         List<JsonNode> rows = drain(sf.open(new SourceSpec.CsvFile(f.toString())));
         assertThat(rows).hasSize(2);
-        assertThat(rows.get(0).get("iso3").asText()).isEqualTo("USA");
-        assertThat(rows.get(0).get("population").asText()).isEqualTo("331");
-        assertThat(rows.get(1).get("name").asText()).isEqualTo("China");
+        assertThat(rows.get(0).get("iso3").asString()).isEqualTo("USA");
+        assertThat(rows.get(0).get("population").asString()).isEqualTo("331");
+        assertThat(rows.get(1).get("name").asString()).isEqualTo("China");
     }
 
     @Test
@@ -161,8 +162,8 @@ class SourceFactoryTest {
         Files.writeString(f, "name,city\n\"Doe, John\",\"New York, NY\"\n");
         List<JsonNode> rows = drain(sf.open(new SourceSpec.CsvFile(f.toString())));
         assertThat(rows).hasSize(1);
-        assertThat(rows.get(0).get("name").asText()).isEqualTo("Doe, John");
-        assertThat(rows.get(0).get("city").asText()).isEqualTo("New York, NY");
+        assertThat(rows.get(0).get("name").asString()).isEqualTo("Doe, John");
+        assertThat(rows.get(0).get("city").asString()).isEqualTo("New York, NY");
     }
 
     @Test
@@ -174,7 +175,7 @@ class SourceFactoryTest {
         Files.writeString(f, "s\n\"he said \"\"hi\"\"\"\n");
         List<JsonNode> rows = drain(sf.open(new SourceSpec.CsvFile(f.toString())));
         assertThat(rows).hasSize(1);
-        assertThat(rows.get(0).get("s").asText()).isEqualTo("he said \"hi\"");
+        assertThat(rows.get(0).get("s").asString()).isEqualTo("he said \"hi\"");
     }
 
     @Test
@@ -220,8 +221,8 @@ class SourceFactoryTest {
         Path f = home.resolve("in.csv");
         Files.writeString(f, "a,b\n1,2,3,4\n");
         List<JsonNode> rows = drain(sf.open(new SourceSpec.CsvFile(f.toString())));
-        assertThat(rows.get(0).get("a").asText()).isEqualTo("1");
-        assertThat(rows.get(0).get("b").asText()).isEqualTo("2");
+        assertThat(rows.get(0).get("a").asString()).isEqualTo("1");
+        assertThat(rows.get(0).get("b").asString()).isEqualTo("2");
         assertThat(rows.get(0).size()).isEqualTo(2);
     }
 
@@ -255,7 +256,7 @@ class SourceFactoryTest {
                 Map.of("n", 2, "s", "two"));
         List<JsonNode> out = drain(sf.open(new SourceSpec.Inline(rows)));
         assertThat(out).hasSize(2);
-        assertThat(out.get(0).get("s").asText()).isEqualTo("one");
+        assertThat(out.get(0).get("s").asString()).isEqualTo("one");
         assertThat(out.get(1).get("n").asInt()).isEqualTo(2);
     }
 

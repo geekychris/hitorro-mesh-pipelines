@@ -3,9 +3,11 @@
  */
 package com.hitorro.mesh.pipelines.parse;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.DeserializationFeature;
+import com.hitorro.util.json.JsonMappers;
+import com.hitorro.util.json.YamlMappers;
 import com.hitorro.mesh.pipelines.model.JobSpec;
 
 import java.io.IOException;
@@ -24,18 +26,27 @@ import java.nio.file.Path;
  */
 public final class JobSpecYaml {
 
-    private static final ObjectMapper YAML = new YAMLMapper()
-            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+    // 3.x: new YAMLMapper()/new ObjectMapper() with FAIL_ON_UNKNOWN_PROPERTIES disabled.
+    // YamlMappers: Jackson 2's YAML 1.1 scalar typing, defaults and stream limits.
+    private static final ObjectMapper YAML = YamlMappers.builder()
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .build();
 
-    private static final ObjectMapper JSON = new ObjectMapper()
-            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+    private static final ObjectMapper JSON = JsonMappers.builder()
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .build();
 
     private JobSpecYaml() { }
 
     public static JobSpec parse(String text) throws IOException {
         String trimmed = text.trim();
         ObjectMapper m = (trimmed.startsWith("{") || trimmed.startsWith("[")) ? JSON : YAML;
-        return m.readValue(text, JobSpec.class);
+        try {
+            return m.readValue(text, JobSpec.class);
+        } catch (JacksonException e) {
+            // 3.x: a bad spec was a JsonProcessingException, an IOException.
+            throw new IOException(e.getMessage(), e);
+        }
     }
 
     public static JobSpec parse(InputStream in) throws IOException {
@@ -59,6 +70,10 @@ public final class JobSpecYaml {
 
     /** Re-emit as JSON — used by the REST API to return the parsed spec. */
     public static String toJson(JobSpec spec) throws IOException {
-        return JSON.writerWithDefaultPrettyPrinter().writeValueAsString(spec);
+        try {
+            return JSON.writerWithDefaultPrettyPrinter().writeValueAsString(spec);
+        } catch (JacksonException e) {
+            throw new IOException(e.getMessage(), e);
+        }
     }
 }

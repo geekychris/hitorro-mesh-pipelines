@@ -3,9 +3,10 @@
  */
 package com.hitorro.mesh.pipelines.sinks;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
+import tools.jackson.databind.node.ObjectNode;
 import com.hitorro.mesh.pipelines.model.SinkSpec;
 import com.hitorro.util.core.iterator.sinks.Sink;
 import org.junit.jupiter.api.Test;
@@ -25,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class CsvJsonSinkIntegrationTest {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
 
     @Test
     void csvFile_writesHeaderAndRows_viaRegistry(@TempDir Path tmp) throws Exception {

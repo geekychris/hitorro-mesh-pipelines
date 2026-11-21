@@ -3,7 +3,7 @@
  */
 package com.hitorro.mesh.pipelines.runtime;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import com.hitorro.mesh.pipelines.model.StepSpec;
 
 import java.util.function.Function;

@@ -3,9 +3,10 @@
  */
 package com.hitorro.mesh.pipelines.runtime;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
+import tools.jackson.databind.node.ObjectNode;
 import com.hitorro.mesh.pipelines.model.AggSpec;
 import com.hitorro.mesh.pipelines.model.JobSpec;
 import com.hitorro.mesh.pipelines.model.NodeSpec;
@@ -26,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
+import com.hitorro.util.json.JsonValues;
 
 /**
  * Fans a job's partition-instances across agents that advertise the
@@ -44,7 +46,7 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class PipelineScheduler implements AutoCloseable {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
     private static final AtomicLong TASK_SEQ = new AtomicLong();
 
     private static final int MAX_RETRIES = 2;
@@ -454,10 +456,10 @@ public final class PipelineScheduler implements AutoCloseable {
     private void onResult(String taskId, JobStatus.NodeStatus ns, byte[] data) {
         try {
             JsonNode msg = JSON.readTree(data);
-            if (msg.hasNonNull("eos") && msg.get("eos").asBoolean()) {
+            if (msg.hasNonNull("eos") && JsonValues.asBoolean(msg.get("eos"))) {
                 ResultAccumulator acc = outstanding.get(taskId);
                 if (acc != null) {
-                    acc.rowCount = msg.hasNonNull("rowCount") ? msg.get("rowCount").asLong() : acc.rows.size();
+                    acc.rowCount = msg.hasNonNull("rowCount") ? JsonValues.asLong(msg.get("rowCount")) : acc.rows.size();
                     acc.eos = true;
                 }
             } else if (msg.hasNonNull("row")) {
@@ -477,7 +479,7 @@ public final class PipelineScheduler implements AutoCloseable {
         List<String> out = new java.util.ArrayList<>();
         for (JsonNode a : arr) {
             for (JsonNode c : a.get("capabilities")) {
-                if (cap.equals(c.asText())) { out.add(a.get("agentId").asText()); break; }
+                if (cap.equals(JsonValues.asText(c))) { out.add(JsonValues.asText(a.get("agentId"))); break; }
             }
         }
         return out;

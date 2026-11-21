@@ -3,11 +3,13 @@
  */
 package com.hitorro.mesh.pipelines.sources;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
+import tools.jackson.databind.node.ObjectNode;
 import com.hitorro.mesh.pipelines.model.SourceSpec;
 import com.hitorro.mesh.pipelines.sinks.SinkRegistry;
+import tools.jackson.core.JacksonException;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -20,6 +22,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.GZIPInputStream;
+import com.hitorro.util.json.JsonValues;
 
 /**
  * Opens a {@link SourceSpec} into an {@code Iterator<JsonNode>}. Callers
@@ -32,7 +35,7 @@ import java.util.zip.GZIPInputStream;
  */
 public final class SourceFactory {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
 
     private final SinkRegistry sinkRegistry;
     private final List<SourceAdapter> adapters = new ArrayList<>();
@@ -124,14 +127,14 @@ public final class SourceFactory {
                     java.net.http.HttpResponse.BodyHandlers.ofString());
             JsonNode result = JSON.readTree(resp.body());
             if (result.has("error")) {
-                throw new IOException("sql source error: " + result.get("message").asText());
+                throw new IOException("sql source error: " + JsonValues.asText(result.get("message")));
             }
             JsonNode rows = result.get("rows");
             if (rows == null || !rows.isArray()) return java.util.Collections.emptyIterator();
             java.util.List<JsonNode> out = new java.util.ArrayList<>(rows.size());
             rows.forEach(out::add);
             return out.iterator();
-        } catch (java.io.IOException | InterruptedException e) {
+        } catch ( JacksonException |java.io.IOException | InterruptedException e) {
             throw new IOException("sql source failed: " + e.getMessage(), e);
         }
     }
@@ -184,7 +187,7 @@ public final class SourceFactory {
             @Override public JsonNode next() {
                 if (!hasNext()) throw new java.util.NoSuchElementException();
                 try { return JSON.readTree(next); }
-                catch (IOException e) { throw new RuntimeException(e); }
+                catch (JacksonException e) { throw new RuntimeException(e); }
                 finally { next = null; }
             }
 

@@ -3,8 +3,9 @@
  */
 package com.hitorro.mesh.pipelines.sources;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import com.hitorro.util.json.JsonMappers;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -13,6 +14,7 @@ import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import com.hitorro.util.json.JsonValues;
 
 /**
  * Reducer-side shuffle source for auto-split reduce. Subscribes to a
@@ -34,7 +36,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public final class ShuffleBucketSource implements Iterator<JsonNode>, AutoCloseable {
 
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = JsonMappers.json();
 
     private final int expectedMappers;
     private final AtomicBoolean cancelled;
@@ -80,8 +82,8 @@ public final class ShuffleBucketSource implements Iterator<JsonNode>, AutoClosea
     private void onMessage(byte[] data) {
         try {
             JsonNode env = JSON.readTree(data);
-            if (env.hasNonNull("_eos") && env.get("_eos").asBoolean()) {
-                String mid = env.hasNonNull("mapperId") ? env.get("mapperId").asText() : ("m" + eosCount.get());
+            if (env.hasNonNull("_eos") && JsonValues.asBoolean(env.get("_eos"))) {
+                String mid = env.hasNonNull("mapperId") ? JsonValues.asText(env.get("mapperId")) : ("m" + eosCount.get());
                 if (eosMapperIds.add(mid)) eosCount.incrementAndGet();
             } else if (env.hasNonNull("row")) {
                 queue.add(env.get("row"));
